@@ -4,14 +4,18 @@ import android.app.*;
 import android.os.*;
 import android.content.*;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.LruCache;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
+import android.view.Gravity;
 import android.text.InputType;
 import org.json.*;
 import androidx.media3.common.MediaItem;
@@ -22,7 +26,9 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.util.*;
+import java.util.concurrent.*;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 
@@ -32,6 +38,8 @@ public class MainActivity extends Activity {
     private final ArrayList<Entry> entries=new ArrayList<>();
     private LinearLayout root, content, nav; private TextView status, sourceLabel; private String category="Live"; private int activeSource=0;
     private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private View firstContentItem;
+    private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
+    private final ThreadPoolExecutor thumbnailWorkers=new ThreadPoolExecutor(3,3,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(128),new ThreadPoolExecutor.DiscardOldestPolicy());
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private boolean playing=false;
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
     private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
@@ -59,12 +67,46 @@ public class MainActivity extends Activity {
         if(sources.isEmpty()){showWelcome();return;} ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries)if(e.type.equals(category))shown.add(e);
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading playlist…":"No "+category.toLowerCase()+" found in this source.",20,MUTED);empty.setPadding(0,dp(22),0,0);content.addView(empty);return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
-        for(String group:groups.keySet()){TextView heading=text(group,21,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(17),0,dp(10));content.addView(heading);HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);hsv.addView(row);content.addView(hsv);
-            for(Entry e:groups.get(group)){LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setBackground(rounded(PANEL,7));tile.setPadding(dp(10),dp(9),dp(10),dp(8));tile.setFocusable(true);tile.setClickable(true);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,7);tile.setOnClickListener(v->play(e));if(firstContentItem==null){firstContentItem=tile;for(TextView tab:categoryTabs)tab.setNextFocusDownId(tile.getId());tile.setNextFocusUpId(currentCategoryTab().getId());}LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(160),dp(112));p.setMargins(0,0,dp(12),dp(6));row.addView(tile,p);
-                TextView icon=text(e.type.equals("Live")?"▶":"▣",25,RED);tile.addView(icon);TextView title=text(e.name,14,WHITE);title.setMaxLines(2);title.setGravity(Gravity.CENTER);tile.addView(title);
-            }
+        boolean portrait=category.equals("Movies")||category.equals("Series");
+        for(String group:groups.keySet()){
+            TextView heading=text(group+"   ·   "+groups.get(group).size(),21,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(19),0,dp(11));content.addView(heading);
+            HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);content.addView(hsv);
+            addShelfTiles(row,groups.get(group),0,portrait);
         }
     }
+    private void addShelfTiles(LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
+        int end=Math.min(start+24,shelf.size());int width=portrait?dp(146):dp(216),artHeight=portrait?dp(184):dp(104);
+        for(int i=start;i<end;i++){
+            Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
+            if(firstContentItem==null){firstContentItem=tile;for(TextView tab:categoryTabs)tab.setNextFocusDownId(tile.getId());tile.setNextFocusUpId(currentCategoryTab().getId());}
+            FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
+            TextView placeholder=text(e.type.equals("Live")?"▶":"▣",32,0xff747781);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
+            ImageView image=new ImageView(this);image.setScaleType(portrait?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);image.setAdjustViewBounds(false);art.addView(image,new FrameLayout.LayoutParams(-1,-1));loadThumbnail(image,e.logo,width,artHeight);
+            if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
+            TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
+        }
+        if(end<shelf.size()){
+            LinearLayout more=new LinearLayout(this);more.setGravity(Gravity.CENTER);more.setOrientation(LinearLayout.VERTICAL);more.setBackground(rounded(0xff292b31,9));more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff292b31,9);
+            TextView arrow=text("›",42,RED);arrow.setGravity(Gravity.CENTER);more.addView(arrow);TextView label=text("LOAD MORE",12,WHITE);label.setTypeface(null,Typeface.BOLD);label.setGravity(Gravity.CENTER);more.addView(label);
+            more.setOnClickListener(v->{row.removeView(more);int firstAdded=row.getChildCount();addShelfTiles(row,shelf,end,portrait);if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));mp.setMargins(0,0,dp(12),dp(8));row.addView(more,mp);
+        }
+    }
+    private void loadThumbnail(ImageView target,String url,int width,int height){
+        target.setTag(url);if(url==null||url.trim().isEmpty())return;Bitmap cached=thumbnailMemory.get(url);if(cached!=null){target.setImageBitmap(cached);return;}
+        try{thumbnailWorkers.execute(()->{Bitmap bitmap=readThumbnail(url,width,height);if(bitmap!=null){thumbnailMemory.put(url,bitmap);target.post(()->{if(url.equals(target.getTag()))target.setImageBitmap(bitmap);});}});}catch(RejectedExecutionException ignored){}
+    }
+    private Bitmap readThumbnail(String url,int width,int height){
+        HttpURLConnection connection=null;File temp=null;try{
+            File dir=new File(getCacheDir(),"thumbnails");if(!dir.exists()&&!dir.mkdirs())return null;String key=sha256(url);File cached=new File(dir,key+".img");Bitmap bitmap=cached.isFile()?decodeThumbnail(cached,width,height):null;if(bitmap!=null)return bitmap;if(cached.exists())cached.delete();
+            connection=(HttpURLConnection)new URL(url).openConnection();connection.setConnectTimeout(3500);connection.setReadTimeout(5000);connection.setInstanceFollowRedirects(true);connection.setRequestProperty("User-Agent","StreamShelf/1.1");connection.connect();int code=connection.getResponseCode();if(code<200||code>=300)return null;
+            temp=new File(dir,key+"."+Thread.currentThread().getId()+".tmp");try(InputStream in=new BufferedInputStream(connection.getInputStream());FileOutputStream out=new FileOutputStream(temp)){byte[] buffer=new byte[8192];int count;long total=0;while((count=in.read(buffer))!=-1){total+=count;if(total>8L*1024*1024)throw new IOException("Artwork exceeds 8 MB");out.write(buffer,0,count);}}
+            if(cached.exists()){temp.delete();}else if(!temp.renameTo(cached)){temp.delete();if(!cached.exists())return null;}trimThumbnailDiskCache(dir);return decodeThumbnail(cached,width,height);
+        }catch(Exception ignored){if(temp!=null)temp.delete();return null;}finally{if(connection!=null)connection.disconnect();}
+    }
+    private Bitmap decodeThumbnail(File file,int width,int height){BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getAbsolutePath(),bounds);if(bounds.outWidth<=0||bounds.outHeight<=0)return null;BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;while(bounds.outWidth/(options.inSampleSize*2)>=width&&bounds.outHeight/(options.inSampleSize*2)>=height)options.inSampleSize*=2;options.inPreferredConfig=Bitmap.Config.RGB_565;return BitmapFactory.decodeFile(file.getAbsolutePath(),options);}
+    private String sha256(String value)throws Exception{byte[] bytes=MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));StringBuilder out=new StringBuilder();for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&255));return out.toString();}
+    private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;for(File f:files)size+=f.length();int count=files.length;for(File f:files){if(count<=140&&size<=36L*1024*1024)break;long bytes=f.length();if(f.delete()){size-=bytes;count--;}}}
     private void setFocusStyle(View view,int normalColor,int radius){view.setOnFocusChangeListener((v,focused)->{GradientDrawable bg=rounded(focused?0xff363940:normalColor,radius);if(focused)bg.setStroke(dp(3),0xfff5f5f5);v.setBackground(bg);v.setScaleX(focused?1.04f:1f);v.setScaleY(focused?1.04f:1f);});}
     private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(tab.getText().toString().equals(category))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
     private void requestInitialFocus(){if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});}
@@ -86,11 +128,12 @@ public class MainActivity extends Activity {
     private void sourceDialog(){LinearLayout box=new LinearLayout(this);box.setPadding(dp(20),dp(10),dp(20),0);box.setOrientation(LinearLayout.VERTICAL);EditText name=new EditText(this);name.setHint("Playlist name");box.addView(name);EditText url=new EditText(this);url.setHint("M3U URL (http:// or https://)");url.setSingleLine(true);url.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);box.addView(url);String[] opts=sources.stream().map(x->x.name).toArray(String[]::new);if(opts.length>0){Spinner sp=new Spinner(this);ArrayList<String> labels=new ArrayList<>();labels.add("Save as new playlist");labels.addAll(Arrays.asList(opts));sp.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));box.addView(sp);new AlertDialog.Builder(this).setTitle("Playlist sources").setView(box).setPositiveButton("Save",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){if(n.isEmpty())n="Playlist "+(sources.size()+1);if(sp.getSelectedItemPosition()>0){activeSource=sp.getSelectedItemPosition()-1;}else sources.add(new Source(n,u));saveSources();loadPlaylist();}}).setNeutralButton("Switch / remove",(d,w)->manageSources()).setNegativeButton("Cancel",null).show();}else new AlertDialog.Builder(this).setTitle("Add playlist source").setView(box).setPositiveButton("Add",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){sources.add(new Source(n.isEmpty()?"Playlist 1":n,u));activeSource=sources.size()-1;saveSources();loadPlaylist();}}).setNegativeButton("Cancel",null).show();}
     private void manageSources(){if(sources.isEmpty())return;String[] names=sources.stream().map(x->x.name).toArray(String[]::new);new AlertDialog.Builder(this).setTitle("Switch playlist").setItems(names,(d,w)->{activeSource=w;loadPlaylist();new AlertDialog.Builder(this).setMessage("Remove "+sources.get(w).name+"?").setPositiveButton("Remove",(a,b)->{sources.remove(w);activeSource=Math.max(0,Math.min(activeSource,sources.size()-1));saveSources();entries.clear();if(sources.isEmpty()){showWelcome();sourceLabel.setText("Choose a playlist source");}else loadPlaylist();}).setNegativeButton("Keep",null).show();}).setNegativeButton("Close",null).show();}
     private void searchDialog(){EditText q=new EditText(this);q.setSingleLine(true);q.setHint("Search this playlist");new AlertDialog.Builder(this).setTitle("Search").setView(q).setPositiveButton("Search",(d,w)->{String needle=q.getText().toString().toLowerCase(Locale.ROOT);content.removeAllViews();for(Entry e:entries)if(e.name.toLowerCase(Locale.ROOT).contains(needle)){Button b=button(e.name);b.setOnClickListener(v->play(e));content.addView(b);}if(content.getChildCount()==0)content.addView(text("No matches",18,MUTED));}).setNegativeButton("Cancel",null).show();}
-    private void play(Entry e){player=new ExoPlayer.Builder(this).build();playerView=new PlayerView(this);playerView.setPlayer(player);playerView.setUseController(true);playerView.setControllerAutoShow(true);playerView.setFocusable(true);playerOverlay=new FrameLayout(this);playerOverlay.setBackgroundColor(Color.BLACK);playerOverlay.addView(playerView,new FrameLayout.LayoutParams(-1,-1));setContentView(playerOverlay);player.setMediaItem(MediaItem.fromUri(e.url));player.prepare();player.play();playing=true;}
+    private void play(Entry e){androidx.media3.exoplayer.LoadControl loadControl=new androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(12000,45000,600,1800).build();player=new ExoPlayer.Builder(this).setLoadControl(loadControl).build();playerView=new PlayerView(this);playerView.setPlayer(player);playerView.setUseController(true);playerView.setControllerAutoShow(true);playerView.setControllerShowTimeoutMs(5000);playerView.setKeepContentOnPlayerReset(true);playerView.setFocusable(true);playerOverlay=new FrameLayout(this);playerOverlay.setBackgroundColor(Color.BLACK);playerOverlay.addView(playerView,new FrameLayout.LayoutParams(-1,-1));setContentView(playerOverlay);player.setMediaItem(MediaItem.fromUri(e.url));playing=true;player.prepare();player.play();}
     @Override public void onBackPressed(){if(playing){if(player!=null){player.release();player=null;}playing=false;buildHome();refreshRows();return;}super.onBackPressed();}
 
     private void loadSources(){try{String raw=getPreferences(0).getString("sources_enc",null);if(raw==null)return;byte[] all=Base64.decode(raw,Base64.NO_WRAP);int n=((all[0]&255)<<8)|(all[1]&255);byte[] iv=Arrays.copyOfRange(all,2,2+n),cipher=Arrays.copyOfRange(all,2+n,all.length);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,secretKey(),new GCMParameterSpec(128,iv));JSONArray a=new JSONArray(new String(c.doFinal(cipher),StandardCharsets.UTF_8));for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);sources.add(new Source(o.getString("name"),o.getString("url")));}activeSource=Math.min(getPreferences(0).getInt("active",0),Math.max(0,sources.size()-1));}catch(Exception ignored){sources.clear();}}
     private void saveSources(){try{JSONArray a=new JSONArray();for(Source s:sources){JSONObject o=new JSONObject();o.put("name",s.name);o.put("url",s.url);a.put(o);}Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,secretKey());byte[] iv=c.getIV(),data=c.doFinal(a.toString().getBytes(StandardCharsets.UTF_8));byte[] out=new byte[2+iv.length+data.length];out[0]=(byte)(iv.length>>8);out[1]=(byte)iv.length;System.arraycopy(iv,0,out,2,iv.length);System.arraycopy(data,0,out,2+iv.length,data.length);getPreferences(0).edit().putString("sources_enc",Base64.encodeToString(out,Base64.NO_WRAP)).putInt("active",activeSource).apply();}catch(Exception e){status.setText("Could not securely save playlist URLs.");}}
     private javax.crypto.SecretKey secretKey() throws Exception {KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);String alias="StreamShelfKey";if(ks.containsAlias(alias))return (javax.crypto.SecretKey)ks.getKey(alias,null);KeyGenerator g=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");g.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return g.generateKey();}
-    @Override protected void onDestroy(){if(player!=null)player.release();super.onDestroy();}
+    @Override public void onLowMemory(){super.onLowMemory();thumbnailMemory.evictAll();}
+    @Override protected void onDestroy(){if(player!=null)player.release();thumbnailWorkers.shutdownNow();super.onDestroy();}
 }

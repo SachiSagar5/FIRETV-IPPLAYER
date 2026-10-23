@@ -1,6 +1,6 @@
 # StreamShelf for Fire TV
 
-A native Android TV starter IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback.
+A native Android TV IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback. Artwork loads off the UI thread into memory and disk caches, and shelves add more items in small batches so large playlists appear faster.
 
 ## Compatibility
 
@@ -12,7 +12,7 @@ Classification uses group and item text: groups or titles mentioning movie/VOD/f
 
 ## Fire TV remote
 
-The home screen starts with a selected category, and the focused item is highlighted. Use the D-pad to move between categories and items, **Select** to open an item, and **Back** to leave playback. The app includes an adaptive launcher icon for Fire TV and a fallback icon for older Android versions.
+The home screen starts with a selected category, and the focused item is highlighted. Use the D-pad to move between categories and items, **Select** to open an item, and **Back** to leave playback. The app includes an adaptive launcher icon and a dedicated 320×180 Leanback banner for Fire TV. Live cards fit channel logos inside the card; Movies and Series use poster-style cards. Entries without a valid `tvg-logo` keep a branded placeholder.
 
 ## Build APK remotely with GitHub Actions
 
@@ -31,7 +31,7 @@ Launch StreamShelf, open Sources, enter a display name and M3U URL, and save. Re
 
 - `app/src/main/java/tv/sachin/streamshelf/MainActivity.java`: UI, playlist parser, encrypted source storage, playback
 - `app/src/main/AndroidManifest.xml`: Fire TV launcher entry and internet permission
-- `app/src/main/res/`: adaptive StreamShelf launcher icon
+- `app/src/main/res/`: adaptive icon, Leanback banner, and artwork placeholders
 - `.github/workflows/build.yml`: remote APK build
 
 ## Notes
