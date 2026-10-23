@@ -35,6 +35,8 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
     private static final int BG=0xff101114, PANEL=0xff202126, RED=0xffe50914, WHITE=0xfff5f5f5, MUTED=0xffa7a7ad;
+    private static final String DEFAULT_PLAYLIST_NAME="MyList";
+    private static final String DEFAULT_PLAYLIST_URL="https://raw.githubusercontent.com/SachiSagar5/MyList-IPTV/main/MyList.m3u";
     private final ArrayList<Source> sources=new ArrayList<>();
     private final ArrayList<Entry> entries=new ArrayList<>();
     private LinearLayout root, content, nav; private TextView status, sourceLabel; private String category="Live"; private int activeSource=0;
@@ -45,7 +47,7 @@ public class MainActivity extends Activity {
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
     private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
 
-    @Override public void onCreate(Bundle b){super.onCreate(b); getWindow().setFlags(1024,1024); loadSources(); buildHome(); if(!sources.isEmpty()) loadPlaylist(); else showWelcome();}
+    @Override public void onCreate(Bundle b){super.onCreate(b); getWindow().setFlags(1024,1024); loadSources(); boolean seededDefault=sources.isEmpty(); if(seededDefault){sources.add(new Source(DEFAULT_PLAYLIST_NAME,DEFAULT_PLAYLIST_URL));activeSource=0;} buildHome(); if(seededDefault)saveSources(); if(!sources.isEmpty()) loadPlaylist(); else showWelcome();}
     private int dp(float x){return (int)(x*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable rounded(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private TextView text(String s,int size,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);return t;}

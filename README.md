@@ -16,7 +16,7 @@ The home screen starts with a selected category, and the focused item is highlig
 
 ## Build APK remotely with GitHub Actions
 
-1. Create a private or public GitHub repository for this app and upload the contents of this folder to its `main` branch. Do not put playlist URLs into the repository.
+1. The app starts with the supplied MyList M3U URL on a fresh install. The playlist contents are fetched at runtime and are not copied into this repository. Existing installs with a saved playlist keep their current source.
 2. Open **Actions → Build StreamShelf APK → Run workflow** (or push to `main`).
 3. Download the `streamshelf-debug-apk` artifact from the completed workflow run. It contains `app-debug.apk`.
 4. Sideload the APK using your preferred Fire TV method. The app is not signed for Play Store distribution; the debug APK is appropriate for personal sideloading.
@@ -25,7 +25,7 @@ The workflow installs Java 17, Gradle 8.9, Android SDK platform 35, and builds t
 
 ## Add playlists
 
-Launch StreamShelf, open Sources, enter a display name and M3U URL, and save. Repeat for additional playlists. Use the source label above the shelves to switch playlists. Playlist URLs may contain account credentials; they are AES-GCM encrypted with a key held by Android Keystore. They are not uploaded by the app. The supplied playlist URL is intentionally not embedded in this source.
+On a fresh install, StreamShelf loads the supplied MyList M3U URL by default. Open Sources to add more playlist URLs; use the source label above the shelves to switch playlists. Playlist URLs may contain account credentials; they are AES-GCM encrypted with a key held by Android Keystore. User-added URLs are not uploaded by the app. The built-in default is only a URL; playlist contents are fetched at runtime.
 
 ## Project structure
 
