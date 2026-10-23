@@ -12,7 +12,7 @@ Classification uses group and item text: groups or titles mentioning movie/VOD/f
 
 ## Fire TV remote
 
-The home screen starts with a selected category, and the focused item is highlighted. Use the D-pad to move between categories and items, **Select** to open an item, and **Back** to leave playback. The app includes an adaptive launcher icon and a dedicated 320×180 Leanback banner for Fire TV. Live cards fit channel logos inside the card; Movies and Series use poster-style cards. Entries without a valid `tvg-logo` keep a branded placeholder.
+The home screen uses a full-screen dashboard with a left navigation rail, featured title, and horizontal Movies, Series, and Live TV shelves. Use the D-pad to navigate, **Select** to open a title, **Menu** to add or remove a focused title from My List, **Search** to search the active playlist, and **Back** to leave playback. The player handles remote play/pause keys, shows buffering and retry feedback, and pauses when StreamShelf goes into the background. The app includes an adaptive launcher icon and a dedicated Leanback banner for Fire TV. Entries without a valid `tvg-logo` keep a branded placeholder.
 
 ## Build APK remotely with GitHub Actions
 
