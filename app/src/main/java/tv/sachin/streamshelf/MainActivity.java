@@ -6,6 +6,7 @@ import android.content.*;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.security.keystore.KeyGenParameterSpec;
@@ -37,7 +38,7 @@ public class MainActivity extends Activity {
     private final ArrayList<Source> sources=new ArrayList<>();
     private final ArrayList<Entry> entries=new ArrayList<>();
     private LinearLayout root, content, nav; private TextView status, sourceLabel; private String category="Live"; private int activeSource=0;
-    private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private View firstContentItem;
+    private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
     private final ThreadPoolExecutor thumbnailWorkers=new ThreadPoolExecutor(3,3,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(128),new ThreadPoolExecutor.DiscardOldestPolicy());
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private boolean playing=false;
@@ -57,31 +58,31 @@ public class MainActivity extends Activity {
         String[] tabs={"Live","Movies","Series","Sources"}; for(String tab:tabs){TextView v=text(tab,17,WHITE);v.setFocusable(true);v.setClickable(true);v.setId(View.generateViewId());v.setPadding(dp(14),dp(9),dp(14),dp(9));setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Sources")){sourceDialog();return;}category=tab;refreshRows();focusFirstContent();});categoryTabs.add(v);nav.addView(v);}
         TextView search=text("⌕",30,WHITE);search.setFocusable(true);search.setClickable(true);search.setPadding(dp(10),0,dp(10),0);setFocusStyle(search,Color.TRANSPARENT,7);search.setOnClickListener(v->searchDialog());top.addView(search);
         sourceLabel=text("Choose a playlist source",14,MUTED);sourceLabel.setPadding(dp(40),dp(5),dp(12),dp(12));sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->manageSources());root.addView(sourceLabel);
-        ScrollView scroll=new ScrollView(this);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(38),dp(6),dp(38),dp(25));content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);
+        ScrollView scroll=new ScrollView(this);scroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->{for(HorizontalScrollView shelf:shelfRows)loadVisibleThumbnails(shelf);});root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(38),dp(6),dp(38),dp(25));content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);
         status=text("",15,MUTED);status.setPadding(dp(40),dp(8),0,dp(12));root.addView(status);
         requestInitialFocus();
     }
     private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",26,WHITE);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Add an M3U playlist URL in Sources to begin. Playlist links are encrypted on this device.",17,MUTED);content.addView(sub);Button b=button("Add playlist");b.setOnClickListener(v->sourceDialog());content.addView(b);}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
-    private void refreshRows(){content.removeAllViews();firstContentItem=null;sourceLabel.setText(sources.isEmpty()?"No playlist selected":"SOURCE  ·  "+sources.get(Math.min(activeSource,sources.size()-1)).name+"     ▾");
+    private void refreshRows(){content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText(sources.isEmpty()?"No playlist selected":"SOURCE  ·  "+sources.get(Math.min(activeSource,sources.size()-1)).name+"     ▾");
         if(sources.isEmpty()){showWelcome();return;} ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries)if(e.type.equals(category))shown.add(e);
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading playlist…":"No "+category.toLowerCase()+" found in this source.",20,MUTED);empty.setPadding(0,dp(22),0,0);content.addView(empty);return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
         boolean portrait=category.equals("Movies")||category.equals("Series");
         for(String group:groups.keySet()){
             TextView heading=text(group+"   ·   "+groups.get(group).size(),21,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(19),0,dp(11));content.addView(heading);
-            HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);content.addView(hsv);
-            addShelfTiles(row,groups.get(group),0,portrait);
+            HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);content.addView(hsv);shelfRows.add(hsv);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));
+            addShelfTiles(hsv,row,groups.get(group),0,portrait);
         }
     }
-    private void addShelfTiles(LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
-        int end=Math.min(start+24,shelf.size());int width=portrait?dp(146):dp(216),artHeight=portrait?dp(184):dp(104);
+    private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
+        int end=Math.min(start+12,shelf.size());int width=portrait?dp(146):dp(216),artHeight=portrait?dp(184):dp(104);
         for(int i=start;i<end;i++){
             Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
             if(firstContentItem==null){firstContentItem=tile;for(TextView tab:categoryTabs)tab.setNextFocusDownId(tile.getId());tile.setNextFocusUpId(currentCategoryTab().getId());}
             FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
             TextView placeholder=text(e.type.equals("Live")?"▶":"▣",32,0xff747781);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
-            ImageView image=new ImageView(this);image.setScaleType(portrait?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);image.setAdjustViewBounds(false);art.addView(image,new FrameLayout.LayoutParams(-1,-1));loadThumbnail(image,e.logo,width,artHeight);
+            ImageView image=new ImageView(this);image.setScaleType(portrait?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
@@ -89,11 +90,13 @@ public class MainActivity extends Activity {
         if(end<shelf.size()){
             LinearLayout more=new LinearLayout(this);more.setGravity(Gravity.CENTER);more.setOrientation(LinearLayout.VERTICAL);more.setBackground(rounded(0xff292b31,9));more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff292b31,9);
             TextView arrow=text("›",42,RED);arrow.setGravity(Gravity.CENTER);more.addView(arrow);TextView label=text("LOAD MORE",12,WHITE);label.setTypeface(null,Typeface.BOLD);label.setGravity(Gravity.CENTER);more.addView(label);
-            more.setOnClickListener(v->{row.removeView(more);int firstAdded=row.getChildCount();addShelfTiles(row,shelf,end,portrait);if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));mp.setMargins(0,0,dp(12),dp(8));row.addView(more,mp);
+            more.setOnClickListener(v->{row.removeView(more);int firstAdded=row.getChildCount();addShelfTiles(hsv,row,shelf,end,portrait);if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));mp.setMargins(0,0,dp(12),dp(8));row.addView(more,mp);
         }
+        hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);
     }
+    private void loadVisibleThumbnails(HorizontalScrollView shelf){if(shelf.getVisibility()!=View.VISIBLE||shelf.getChildCount()==0||!(shelf.getChildAt(0) instanceof ViewGroup))return;ViewGroup row=(ViewGroup)shelf.getChildAt(0);for(int i=0;i<row.getChildCount();i++){View child=row.getChildAt(i);if(!(child instanceof LinearLayout))continue;LinearLayout tile=(LinearLayout)child;if(tile.getChildCount()==0||!(tile.getChildAt(0) instanceof FrameLayout))continue;FrameLayout art=(FrameLayout)tile.getChildAt(0);Rect visible=new Rect();if(!art.getGlobalVisibleRect(visible))continue;for(int j=0;j<art.getChildCount();j++){View item=art.getChildAt(j);if(item instanceof ImageView){ImageView image=(ImageView)item;Object tag=image.getTag();if(tag instanceof Entry&&image.getWidth()>0&&image.getHeight()>0){Entry e=(Entry)tag;loadThumbnail(image,e.logo,image.getWidth(),image.getHeight());}break;}}}}
     private void loadThumbnail(ImageView target,String url,int width,int height){
-        target.setTag(url);if(url==null||url.trim().isEmpty())return;Bitmap cached=thumbnailMemory.get(url);if(cached!=null){target.setImageBitmap(cached);return;}
+        if(url==null||url.trim().isEmpty()||url.equals(target.getTag()))return;target.setTag(url);Bitmap cached=thumbnailMemory.get(url);if(cached!=null){target.setImageBitmap(cached);return;}
         try{thumbnailWorkers.execute(()->{Bitmap bitmap=readThumbnail(url,width,height);if(bitmap!=null){thumbnailMemory.put(url,bitmap);target.post(()->{if(url.equals(target.getTag()))target.setImageBitmap(bitmap);});}});}catch(RejectedExecutionException ignored){}
     }
     private Bitmap readThumbnail(String url,int width,int height){
