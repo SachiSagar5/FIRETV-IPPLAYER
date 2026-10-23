@@ -31,6 +31,7 @@ public class MainActivity extends Activity {
     private final ArrayList<Source> sources=new ArrayList<>();
     private final ArrayList<Entry> entries=new ArrayList<>();
     private LinearLayout root, content, nav; private TextView status, sourceLabel; private String category="Live"; private int activeSource=0;
+    private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private View firstContentItem;
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private boolean playing=false;
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
     private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
@@ -40,27 +41,43 @@ public class MainActivity extends Activity {
     private GradientDrawable rounded(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private TextView text(String s,int size,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);return t;}
     private void buildHome(){
-        root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);setContentView(root);
+        categoryTabs.clear();
+        root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(34),dp(17),dp(34),dp(12));root.addView(top,new LinearLayout.LayoutParams(-1,dp(65)));
         TextView brand=text("STREAMSHELF",23,RED);brand.setTypeface(null,Typeface.BOLD);top.addView(brand);
         nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER_VERTICAL);nav.setPadding(dp(38),0,0,0);top.addView(nav,new LinearLayout.LayoutParams(0,-1,1));
-        String[] tabs={"Live","Movies","Series","Sources"}; for(String tab:tabs){TextView v=text(tab,17,WHITE);v.setFocusable(true);v.setPadding(dp(14),dp(9),dp(14),dp(9));v.setOnClickListener(w->{if(tab.equals("Sources")){sourceDialog();return;}category=tab;refreshRows();});nav.addView(v);}
-        TextView search=text("⌕",30,WHITE);search.setFocusable(true); search.setPadding(dp(10),0,dp(10),0);search.setOnClickListener(v->searchDialog());top.addView(search);
-        sourceLabel=text("Choose a playlist source",14,MUTED);sourceLabel.setPadding(dp(40),dp(3),0,dp(12));sourceLabel.setFocusable(true);sourceLabel.setOnClickListener(v->manageSources());root.addView(sourceLabel);
+        String[] tabs={"Live","Movies","Series","Sources"}; for(String tab:tabs){TextView v=text(tab,17,WHITE);v.setFocusable(true);v.setClickable(true);v.setId(View.generateViewId());v.setPadding(dp(14),dp(9),dp(14),dp(9));setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Sources")){sourceDialog();return;}category=tab;refreshRows();focusFirstContent();});categoryTabs.add(v);nav.addView(v);}
+        TextView search=text("⌕",30,WHITE);search.setFocusable(true);search.setClickable(true);search.setPadding(dp(10),0,dp(10),0);setFocusStyle(search,Color.TRANSPARENT,7);search.setOnClickListener(v->searchDialog());top.addView(search);
+        sourceLabel=text("Choose a playlist source",14,MUTED);sourceLabel.setPadding(dp(40),dp(5),dp(12),dp(12));sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->manageSources());root.addView(sourceLabel);
         ScrollView scroll=new ScrollView(this);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(38),dp(6),dp(38),dp(25));content.setOrientation(LinearLayout.VERTICAL);scroll.addView(content);
         status=text("",15,MUTED);status.setPadding(dp(40),dp(8),0,dp(12));root.addView(status);
+        requestInitialFocus();
     }
     private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",26,WHITE);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Add an M3U playlist URL in Sources to begin. Playlist links are encrypted on this device.",17,MUTED);content.addView(sub);Button b=button("Add playlist");b.setOnClickListener(v->sourceDialog());content.addView(b);}
-    private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);return b;}
-    private void refreshRows(){content.removeAllViews();sourceLabel.setText(sources.isEmpty()?"No playlist selected":"SOURCE  ·  "+sources.get(Math.min(activeSource,sources.size()-1)).name+"     ▾");
+    private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
+    private void refreshRows(){content.removeAllViews();firstContentItem=null;sourceLabel.setText(sources.isEmpty()?"No playlist selected":"SOURCE  ·  "+sources.get(Math.min(activeSource,sources.size()-1)).name+"     ▾");
         if(sources.isEmpty()){showWelcome();return;} ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries)if(e.type.equals(category))shown.add(e);
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading playlist…":"No "+category.toLowerCase()+" found in this source.",20,MUTED);empty.setPadding(0,dp(22),0,0);content.addView(empty);return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
         for(String group:groups.keySet()){TextView heading=text(group,21,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(17),0,dp(10));content.addView(heading);HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);hsv.addView(row);content.addView(hsv);
-            for(Entry e:groups.get(group)){LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setBackground(rounded(PANEL,7));tile.setPadding(dp(10),dp(9),dp(10),dp(8));tile.setFocusable(true);tile.setClickable(true);tile.setOnClickListener(v->play(e));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(160),dp(112));p.setMargins(0,0,dp(12),dp(6));row.addView(tile,p);
+            for(Entry e:groups.get(group)){LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setGravity(Gravity.CENTER);tile.setBackground(rounded(PANEL,7));tile.setPadding(dp(10),dp(9),dp(10),dp(8));tile.setFocusable(true);tile.setClickable(true);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,7);tile.setOnClickListener(v->play(e));if(firstContentItem==null){firstContentItem=tile;for(TextView tab:categoryTabs)tab.setNextFocusDownId(tile.getId());tile.setNextFocusUpId(currentCategoryTab().getId());}LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(160),dp(112));p.setMargins(0,0,dp(12),dp(6));row.addView(tile,p);
                 TextView icon=text(e.type.equals("Live")?"▶":"▣",25,RED);tile.addView(icon);TextView title=text(e.name,14,WHITE);title.setMaxLines(2);title.setGravity(Gravity.CENTER);tile.addView(title);
             }
         }
+    }
+    private void setFocusStyle(View view,int normalColor,int radius){view.setOnFocusChangeListener((v,focused)->{GradientDrawable bg=rounded(focused?0xff363940:normalColor,radius);if(focused)bg.setStroke(dp(3),0xfff5f5f5);v.setBackground(bg);v.setScaleX(focused?1.04f:1f);v.setScaleY(focused?1.04f:1f);});}
+    private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(tab.getText().toString().equals(category))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
+    private void requestInitialFocus(){if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});}
+    private void focusFirstContent(){content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else sourceLabel.requestFocus();});}
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event){
+        if(event.getAction()==android.view.KeyEvent.ACTION_DOWN){
+            int key=event.getKeyCode();
+            if(playing&&key==android.view.KeyEvent.KEYCODE_BACK){onBackPressed();return true;}
+            if(!playing&&getCurrentFocus()==null&&event.getRepeatCount()==0&&(key==android.view.KeyEvent.KEYCODE_DPAD_UP||key==android.view.KeyEvent.KEYCODE_DPAD_DOWN||key==android.view.KeyEvent.KEYCODE_DPAD_LEFT||key==android.view.KeyEvent.KEYCODE_DPAD_RIGHT||key==android.view.KeyEvent.KEYCODE_DPAD_CENTER||key==android.view.KeyEvent.KEYCODE_ENTER||key==android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)){
+                requestInitialFocus();return true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
     private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);status.setText("Loading "+s.name+"…");entries.clear();refreshRows();new Thread(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(18000);c.setReadTimeout(25000);c.setRequestProperty("User-Agent","StreamShelf/1.0");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8));String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,"group-title");String logo=attr(info,"tvg-logo");String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}r.close();}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{entries.clear();entries.addAll(parsed);status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});}).start();}
     private String afterComma(String s){int i=s.indexOf(',');String v=i>=0?s.substring(i+1).trim():"Untitled";return v.isEmpty()?"Untitled":v;}
