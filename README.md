@@ -5,7 +5,7 @@
 ![StreamShelf home screen UI preview](docs/streamshelf-ui-preview.png)
 
 
-A native Android TV IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback. Artwork loads off the UI thread into memory and disk caches, and shelves add more items in small batches so large playlists appear faster. Version 1.3.0 also adds playback buffering and retry feedback, pauses playback while StreamShelf is in the background, and avoids rebuilding shelf views when returning from the player.
+A native Android TV IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback. Artwork loads off the UI thread into memory and disk caches, and shelves add more items in small batches so large playlists appear faster. Version 1.4.1 fixes a startup crash in the featured home-screen panel.
 
 ## Compatibility
 
