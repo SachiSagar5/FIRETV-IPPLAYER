@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+  Legacy launcher icon for xhdpi (~96x96dp)
+  Replace with actual PNG file: ic_launcher.png (96x96) in this directory for best Fire TV compatibility
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_icon"
+    android:gravity="center"
+    android:antialias="true"
+    android:filter="true" />
