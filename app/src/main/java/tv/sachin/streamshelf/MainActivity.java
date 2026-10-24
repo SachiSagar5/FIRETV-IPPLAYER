@@ -63,7 +63,11 @@ public class MainActivity extends Activity {
     private LinearLayout root, content, nav, sidebar; private ScrollView mainScroll; private TextView status, sourceLabel; private TextView searchControl; private String category="Home"; private int activeSource=0;
     private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
-    private final ThreadPoolExecutor thumbnailWorkers=new ThreadPoolExecutor(3,3,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(128),new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ThreadPoolExecutor thumbnailWorkers = new ThreadPoolExecutor(
+        4, 8, 30, TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(64),
+        new ThreadPoolExecutor.DiscardOldestPolicy()
+    );
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private View previousHomeFocus; private boolean playing=false;
     private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton, browseBtn;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
@@ -181,6 +185,12 @@ public class MainActivity extends Activity {
 
     // ... rest of the methods remain the same until play() method
     private void buildHome(){
+        // Performance optimizations
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        );
+        
         categoryTabs.clear();
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
         sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);root.addView(sidebar,new LinearLayout.LayoutParams(dp(180),-1));
@@ -338,6 +348,70 @@ public class MainActivity extends Activity {
         addContinueTiles(hsv, row, continueEntries);
     }
 
+    // ViewHolder for grid items (performance optimization)
+    private static class GridItemViewHolder {
+        LinearLayout tile;
+        FrameLayout art;
+        ImageView image;
+        TextView placeholder;
+        TextView titleText;
+        TextView liveBadge;
+        Entry entry;
+        
+        GridItemViewHolder(LinearLayout tile) {
+            this.tile = tile;
+        }
+    }
+    
+    // View pool for recycling grid items
+    private final ArrayList<GridItemViewHolder> viewPool = new ArrayList<>();
+
+    private GridItemViewHolder createGridItemViewHolder(int tileWidth, int tileHeight, int artHeight, Entry e) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setBackground(rounded(0xFF0D141D, 8));
+        tile.setClipChildren(false);
+        tile.setFocusable(true);
+        tile.setClickable(true);
+        tile.setId(View.generateViewId());
+        setFocusStyle(tile, 0xFF0D141D, 8);
+        
+        FrameLayout art = new FrameLayout(this);
+        art.setBackground(rounded(0xFF131A23, 8));
+        art.setClipToOutline(true);
+        LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(tileWidth, artHeight);
+        artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
+        tile.addView(art, artParams);
+        
+        TextView placeholder = new TextView(this);
+        placeholder.setTextColor(0xFF626B78);
+        placeholder.setTextSize(28);
+        placeholder.setGravity(Gravity.CENTER);
+        art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+        
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        
+        TextView titleText = new TextView(this);
+        titleText.setTextColor(WHITE);
+        titleText.setTextSize(13);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setMaxLines(2);
+        titleText.setEllipsize(TextUtils.TruncateAt.END);
+        titleText.setPadding(dp(10), dp(6), dp(10), dp(8));
+        
+        tile.addView(titleText, new LinearLayout.LayoutParams(-1, -2));
+        
+        GridItemViewHolder holder = new GridItemViewHolder(tile);
+        holder.art = art;
+        holder.image = image;
+        holder.placeholder = placeholder;
+        holder.titleText = titleText;
+        
+        return holder;
+    }
+
     // ==================== SHOW ALL GRID VIEW ====================
     private void showAllGrid(String title, ArrayList<Entry> items) {
         if (items == null || items.isEmpty()) return;
@@ -371,6 +445,7 @@ public class MainActivity extends Activity {
         backBtn.setContentDescription("Back");
         backBtn.setOnClickListener(v -> {
             gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                recycleGridViews(gridOverlay);
                 setContentView(root);
                 if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
                     previousHomeFocus.requestFocus();
@@ -438,16 +513,21 @@ public class MainActivity extends Activity {
             int rowEnd = Math.min(rowStart + columns, items.size());
             for (int i = rowStart; i < rowEnd; i++) {
                 Entry e = items.get(i);
-                LinearLayout tile = new LinearLayout(this);
-                tile.setOrientation(LinearLayout.VERTICAL);
-                tile.setBackground(rounded(0xFF0D141D, 8));
-                tile.setClipChildren(false);
-                tile.setFocusable(true);
-                tile.setClickable(true);
-                tile.setTag(e);
-                tile.setId(View.generateViewId());
-                setFocusStyle(tile, 0xFF0D141D, 8);
-                tile.setOnClickListener(v -> {
+                
+                // Reuse view from pool if available
+                GridItemViewHolder holder;
+                if (!viewPool.isEmpty()) {
+                    holder = viewPool.remove(viewPool.size() - 1);
+                    holder.tile.removeAllViews();
+                    holder.tile.setTag(e);
+                    holder.entry = e;
+                } else {
+                    holder = createGridItemViewHolder(tileWidth, tileHeight, artHeight, e);
+                }
+                
+                holder.entry = e;
+                holder.tile.setTag(e);
+                holder.tile.setOnClickListener(v -> {
                     gridOverlay.animate().alpha(0f).setDuration(150).withEndAction(() -> {
                         setContentView(root);
                         if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
@@ -459,27 +539,19 @@ public class MainActivity extends Activity {
                     }).start();
                 });
                 
-                FrameLayout art = new FrameLayout(this);
-                art.setBackground(rounded(0xFF131A23, 8));
-                art.setClipToOutline(true);
-                LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(tileWidth, artHeight);
-                artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
-                tile.addView(art, artParams);
+                // Update content
+                holder.entry = e;
+                holder.titleText.setText(e.name);
+                holder.placeholder.setText(e.type.equals("Live") ? "▶" : "▣");
                 
-                TextView placeholder = new TextView(this);
-                placeholder.setText(e.type.equals("Live") ? "▶" : "▣");
-                placeholder.setTextColor(0xFF626B78);
-                placeholder.setTextSize(28);
-                placeholder.setGravity(Gravity.CENTER);
-                art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
-                
-                ImageView image = new ImageView(this);
-                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                image.setTag(e);
-                art.addView(image, new FrameLayout.LayoutParams(-1, -1));
-                art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight()));
+                // Load thumbnail
+                art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight()));
                 
                 // Live badge
+                if (holder.liveBadge != null) {
+                    holder.art.removeView(holder.liveBadge);
+                    holder.liveBadge = null;
+                }
                 if (e.type.equals("Live")) {
                     TextView badge = text("LIVE", 10, WHITE);
                     badge.setTypeface(null, Typeface.BOLD);
@@ -487,25 +559,16 @@ public class MainActivity extends Activity {
                     badge.setBackground(rounded(RED, 4));
                     FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
                     bp.setMargins(dp(7), dp(7), 0, 0);
-                    art.addView(badge, bp);
+                    holder.art.addView(badge, bp);
+                    holder.liveBadge = badge;
                 }
-                
-                TextView itemTitleText = new TextView(this);
-                itemTitleText.setText(e.name);
-                itemTitleText.setTextColor(WHITE);
-                itemTitleText.setTextSize(13);
-                itemTitleText.setTypeface(null, Typeface.BOLD);
-                itemTitleText.setMaxLines(2);
-                itemTitleText.setEllipsize(TextUtils.TruncateAt.END);
-                itemTitleText.setPadding(dp(10), dp(6), dp(10), dp(8));
-                tile.addView(itemTitleText, new LinearLayout.LayoutParams(-1, -2));
                 
                 LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tileWidth, tileHeight);
                 tileParams.setMargins(0, 0, dp(8), 0);
-                row.addView(tile, tileParams);
+                row.addView(holder.tile, tileParams);
                 
                 // Track first focusable item
-                if (firstContentItem == null) firstContentItem = tile;
+                if (firstContentItem == null) firstContentItem = holder.tile;
             }
         }
         
@@ -523,6 +586,7 @@ public class MainActivity extends Activity {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (keyCode == KeyEvent.KEYCODE_BACK) {
                     gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                        recycleGridViews(gridOverlay);
                         setContentView(root);
                         if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
                             previousHomeFocus.requestFocus();
@@ -545,7 +609,7 @@ public class MainActivity extends Activity {
             else backBtn.requestFocus();
         });
         
-        // Load thumbnails
+        // Load thumbnails asynchronously
         for (Entry e : items) {
             if (e.logo != null && !e.logo.isEmpty()) {
                 thumbnailWorkers.execute(() -> {
@@ -554,6 +618,34 @@ public class MainActivity extends Activity {
                         thumbnailMemory.put(e.logo, bitmap);
                     }
                 });
+            }
+        }
+    }
+    
+    // Recycle grid views when grid is closed
+    private void recycleGridViews(FrameLayout gridOverlay) {
+        if (gridOverlay == null) return;
+        // Find all GridItemViewHolders in the grid and recycle them
+        collectViewsForRecycle(gridOverlay);
+    }
+    
+    private void collectViewsForRecycle(ViewGroup parent) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            if (child instanceof LinearLayout) {
+                // Check if this is a grid tile
+                if (child.getTag() instanceof Entry) {
+                    GridItemViewHolder holder = new GridItemViewHolder((LinearLayout) child);
+                    holder.tile = (LinearLayout) child;
+                    if (child.getChildCount() > 0 && child.getChildAt(0) instanceof FrameLayout) {
+                        holder.art = (FrameLayout) child.getChildAt(0);
+                    }
+                    viewPool.add(holder);
+                    child.setTag(null);
+                    child.setOnClickListener(null);
+                } else {
+                    collectViewsForRecycle((ViewGroup) child);
+                }
             }
         }
     }
@@ -878,8 +970,44 @@ public class MainActivity extends Activity {
     }
     private void loadVisibleThumbnails(HorizontalScrollView shelf){if(shelf.getVisibility()!=View.VISIBLE||shelf.getChildCount()==0||!(shelf.getChildAt(0) instanceof ViewGroup))return;ViewGroup row=(ViewGroup)shelf.getChildAt(0);for(int i=0;i<row.getChildCount();i++){View child=row.getChildAt(i);if(!(child instanceof LinearLayout))continue;LinearLayout tile=(LinearLayout)child;if(tile.getChildCount()==0||!(tile.getChildAt(0) instanceof FrameLayout))continue;FrameLayout art=(FrameLayout)tile.getChildAt(0);Rect visible=new Rect();if(!art.getGlobalVisibleRect(visible))continue;for(int j=0;j<art.getChildCount();j++){View item=art.getChildAt(j);if(item instanceof ImageView){ImageView image=(ImageView)item;Object tag=image.getTag();if(tag instanceof Entry&&image.getWidth()>0&&image.getHeight()>0){Entry e=(Entry)tag;loadThumbnail(image,e.logo,image.getWidth(),image.getHeight());}break;}}}}
     private void loadThumbnail(ImageView target,String url,int width,int height){
-        if(url==null||url.trim().isEmpty()||url.equals(target.getTag()))return;target.setTag(url);Bitmap cached=thumbnailMemory.get(url);if(cached!=null){target.setImageBitmap(cached);return;}
-        try{thumbnailWorkers.execute(()->{Bitmap bitmap=readThumbnail(url,width,height);if(bitmap!=null){thumbnailMemory.put(url,bitmap);target.post(()->{if(url.equals(target.getTag()))target.setImageBitmap(bitmap);});}});}catch(RejectedExecutionException ignored){}
+        if(url==null||url.trim().isEmpty()||url.equals(target.getTag()))return;
+        target.setTag(url);
+        
+        // Check memory cache first
+        Bitmap cached = thumbnailMemory.get(url);
+        if(cached != null) {
+            if (target.getDrawable() == null) {
+                target.setImageBitmap(cached);
+            } else {
+                // Fade in animation for cached images
+                target.setImageBitmap(cached);
+            }
+            return;
+        }
+        
+        // Check disk cache in background
+        thumbnailWorkers.execute(() -> {
+            Bitmap bitmap = readThumbnail(url, width, height);
+            if(bitmap != null) {
+                thumbnailMemory.put(url, bitmap);
+                target.post(() -> {
+                    if (url.equals(target.getTag())) {
+                        // Fade in animation
+                        if (target.getDrawable() == null) {
+                            target.setImageBitmap(bitmap);
+                        } else {
+                            // Cross-fade animation
+                            android.graphics.drawable.TransitionDrawable td = new android.graphics.drawable.TransitionDrawable(new android.graphics.drawable.Drawable[]{
+                                target.getDrawable(),
+                                new android.graphics.drawable.BitmapDrawable(getResources(), bitmap)
+                            });
+                            target.setImageDrawable(td);
+                            td.startTransition(150);
+                        }
+                    }
+                });
+            }
+        });
     }
     private Bitmap readThumbnail(String url,int width,int height){
         HttpURLConnection connection=null;File temp=null;try{
@@ -894,7 +1022,37 @@ public class MainActivity extends Activity {
     private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;for(File f:files)size+=f.length();int count=files.length;for(File f:files){if(count<=140&&size<=36L*1024*1024)break;long bytes=f.length();if(f.delete()){size-=bytes;count--;}}}
     private void animateContentIn(){content.animate().alpha(1f).setDuration(180).start();}
     private void updateCategoryTabs(){for(TextView tab:categoryTabs){boolean selected=category.equals(String.valueOf(tab.getTag()));tab.setTextColor(selected?WHITE:0xffd0d2d7);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(rounded(selected?0xffa90d19:Color.TRANSPARENT,7));}}
-    private void setFocusStyle(View view,int normalColor,int radius){view.setOnFocusChangeListener((v,focused)->{GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);if(focused)bg.setStroke(dp(2),RED);v.setBackground(bg);v.animate().cancel();v.animate().scaleX(focused?1.035f:1f).scaleY(focused?1.035f:1f).translationZ(focused?dp(4):0).setDuration(130).start();});}
+    private void setFocusStyle(View view,int normalColor,int radius){
+        view.setOnFocusChangeListener((v,focused)->{
+            GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);
+            if(focused){
+                bg.setStroke(dp(3), RED);
+                bg.setShadowLayer(dp(8), 0, dp(4), 0x80E50914);
+            } else {
+                bg.setStroke(dp(2), 0xFFFFFFFF);
+                bg.setShadowLayer(0, 0, 0, 0);
+            }
+            v.setBackground(bg);
+            v.animate().cancel();
+            if(focused){
+                v.animate()
+                    .scaleX(1.1f).scaleY(1.1f)
+                    .translationZ(dp(12))
+                    .setDuration(180)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.1f))
+                    .start();
+            } else {
+                v.animate()
+                    .scaleX(1f).scaleY(1f)
+                    .translationZ(0)
+                    .setDuration(180)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f))
+                    .start();
+            }
+        });
+        // Enable hardware acceleration for smooth animations
+        view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+    }
     private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(category.equals(String.valueOf(tab.getTag())))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
     private void requestInitialFocus(){if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});}
     private void focusFirstContent(){content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});}
@@ -1590,21 +1748,41 @@ public class MainActivity extends Activity {
         view.setOnFocusChangeListener((v, focused) -> {
             if (focused) {
                 v.animate().cancel();
-                v.animate().scaleX(1.08f).scaleY(1.08f).setDuration(150).start();
-                // Red glow outline
+                // Apple TV style: scale up with spring effect, elevate, add glow
+                v.animate()
+                    .scaleX(1.12f).scaleY(1.12f)
+                    .translationZ(dp(16))
+                    .setDuration(200)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f))
+                    .start();
+                // Red glow outline with shadow
                 if (v.getBackground() instanceof GradientDrawable) {
-                    ((GradientDrawable) v.getBackground()).setStroke(dp(3), RED);
+                    GradientDrawable bg = (GradientDrawable) v.getBackground();
+                    bg.setStroke(dp(4), RED);
+                    bg.setShadowLayer(dp(8), 0, dp(4), 0x80E50914);
                 }
                 focusedControl = v;
                 focusedControlIndex = indexOfControl(v);
+                // Bring to front for proper layering
+                v.bringToFront();
+                ((ViewGroup) v.getParent()).invalidate();
             } else {
                 v.animate().cancel();
-                v.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+                v.animate()
+                    .scaleX(1f).scaleY(1f)
+                    .translationZ(0)
+                    .setDuration(200)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f))
+                    .start();
                 if (v.getBackground() instanceof GradientDrawable) {
-                    ((GradientDrawable) v.getBackground()).setStroke(dp(2), 0xFFFFFFFF);
+                    GradientDrawable bg = (GradientDrawable) v.getBackground();
+                    bg.setStroke(dp(2), 0xFFFFFFFF);
+                    bg.setShadowLayer(0, 0, 0, 0);
                 }
             }
         });
+        // Enable hardware acceleration for smooth animations
+        view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
     }
 
     private int indexOfControl(View v) {
