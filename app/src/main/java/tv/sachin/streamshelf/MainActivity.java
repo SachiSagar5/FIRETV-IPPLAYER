@@ -545,7 +545,7 @@ public class MainActivity extends Activity {
                 holder.placeholder.setText(e.type.equals("Live") ? "▶" : "▣");
                 
                 // Load thumbnail
-                art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight()));
+                holder.art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight()));
                 
                 // Live badge
                 if (holder.liveBadge != null) {
@@ -633,18 +633,19 @@ public class MainActivity extends Activity {
         for (int i = 0; i < parent.getChildCount(); i++) {
             View child = parent.getChildAt(i);
             if (child instanceof LinearLayout) {
+                ViewGroup childGroup = (ViewGroup) child;
                 // Check if this is a grid tile
                 if (child.getTag() instanceof Entry) {
                     GridItemViewHolder holder = new GridItemViewHolder((LinearLayout) child);
                     holder.tile = (LinearLayout) child;
-                    if (child.getChildCount() > 0 && child.getChildAt(0) instanceof FrameLayout) {
-                        holder.art = (FrameLayout) child.getChildAt(0);
+                    if (childGroup.getChildCount() > 0 && childGroup.getChildAt(0) instanceof FrameLayout) {
+                        holder.art = (FrameLayout) childGroup.getChildAt(0);
                     }
                     viewPool.add(holder);
                     child.setTag(null);
                     child.setOnClickListener(null);
                 } else {
-                    collectViewsForRecycle((ViewGroup) child);
+                    collectViewsForRecycle(childGroup);
                 }
             }
         }
@@ -1027,10 +1028,10 @@ public class MainActivity extends Activity {
             GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);
             if(focused){
                 bg.setStroke(dp(3), RED);
-                bg.setShadowLayer(dp(8), 0, dp(4), 0x80E50914);
+                bg.setShadowLayer(dp(8), 0f, dp(4), 0x80E50914);
             } else {
                 bg.setStroke(dp(2), 0xFFFFFFFF);
-                bg.setShadowLayer(0, 0, 0, 0);
+                bg.setShadowLayer(0f, 0f, 0f, 0);
             }
             v.setBackground(bg);
             v.animate().cancel();
@@ -1759,7 +1760,7 @@ public class MainActivity extends Activity {
                 if (v.getBackground() instanceof GradientDrawable) {
                     GradientDrawable bg = (GradientDrawable) v.getBackground();
                     bg.setStroke(dp(4), RED);
-                    bg.setShadowLayer(dp(8), 0, dp(4), 0x80E50914);
+                    bg.setShadowLayer(dp(8), 0f, dp(4), 0x80E50914);
                 }
                 focusedControl = v;
                 focusedControlIndex = indexOfControl(v);
@@ -1777,7 +1778,7 @@ public class MainActivity extends Activity {
                 if (v.getBackground() instanceof GradientDrawable) {
                     GradientDrawable bg = (GradientDrawable) v.getBackground();
                     bg.setStroke(dp(2), 0xFFFFFFFF);
-                    bg.setShadowLayer(0, 0, 0, 0);
+                    bg.setShadowLayer(0f, 0f, 0f, 0);
                 }
             }
         });
