@@ -413,7 +413,21 @@ public class MainActivity extends Activity {
         return holder;
     }
 
-    // ==================== SHOW ALL GRID VIEW ====================
+    // ==================== SHOW ALL GRID VIEW (WITH PAGINATION) ====================
+    // Pagination constants
+    private static final int ITEMS_PER_PAGE = 24; // 4 rows x 6 columns
+    private static final int LOAD_THRESHOLD_DP = 300; // Load more when 300dp from bottom
+    
+    // Pagination state
+    private ArrayList<Entry> allGridItems = new ArrayList<>();
+    private int currentGridPage = 0;
+    private boolean isLoadingMore = false;
+    private LinearLayout gridContainer;
+    private ScrollView gridScroll;
+    private int gridTileWidth, gridTileHeight, gridArtHeight;
+    private int gridColumns = 6;
+    private String gridTitle;
+
     private void showAllGrid(String title, ArrayList<Entry> items) {
         try {
             if (items == null || items.isEmpty()) return;
@@ -427,90 +441,180 @@ public class MainActivity extends Activity {
                 return;
             }
             
+            // Store items for pagination
+            allGridItems = new ArrayList<>(items);
+            currentGridPage = 0;
+            isLoadingMore = false;
+            gridTitle = title;
+            
+            // Save current home state
+            previousHomeFocus = getCurrentFocus();
+            
+            // Check if root is available
+            if (root == null) {
+                Toast.makeText(this, "Unable to open grid", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
             // Create full-screen grid overlay
             FrameLayout gridOverlay = new FrameLayout(this);
-        gridOverlay.setBackgroundColor(0xFF05090F);
-        gridOverlay.setAlpha(0f);
-        
-        // Top bar
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(24), dp(16), dp(24), dp(16));
-        GradientDrawable topGradient = new GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            new int[]{0xCC000000, 0x88000000, 0x00000000}
-        );
-        topBar.setBackground(topGradient);
-        
-        // Back button
-        ImageView backBtn = new ImageView(this);
-        backBtn.setImageResource(R.drawable.ic_back);
-        backBtn.setColorFilter(WHITE);
-        backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
-        backBtn.setFocusable(true);
-        backBtn.setClickable(true);
-        backBtn.setContentDescription("Back");
-        backBtn.setOnClickListener(v -> {
-            gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                recycleGridViews(gridOverlay);
-                setContentView(root);
-                if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
-                    previousHomeFocus.requestFocus();
-                } else {
-                    requestInitialFocus();
+            gridOverlay.setBackgroundColor(0xFF05090F);
+            gridOverlay.setAlpha(0f);
+            
+            // Top bar
+            LinearLayout topBar = new LinearLayout(this);
+            topBar.setOrientation(LinearLayout.HORIZONTAL);
+            topBar.setGravity(Gravity.CENTER_VERTICAL);
+            topBar.setPadding(dp(24), dp(16), dp(24), dp(16));
+            GradientDrawable topGradient = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xCC000000, 0x88000000, 0x00000000}
+            );
+            topBar.setBackground(topGradient);
+            
+            // Back button
+            ImageView backBtn = new ImageView(this);
+            backBtn.setImageResource(R.drawable.ic_back);
+            backBtn.setColorFilter(WHITE);
+            backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
+            backBtn.setFocusable(true);
+            backBtn.setClickable(true);
+            backBtn.setContentDescription("Back");
+            backBtn.setOnClickListener(v -> {
+                gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                    recycleGridViews(gridOverlay);
+                    setContentView(root);
+                    if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                        previousHomeFocus.requestFocus();
+                    } else {
+                        requestInitialFocus();
+                    }
+                }).start();
+            });
+            setFocusStyleView(backBtn, dp(40));
+            topBar.addView(backBtn, new LinearLayout.LayoutParams(-2, -2));
+            
+            // Title
+            TextView titleText = new TextView(this);
+            titleText.setText(title);
+            titleText.setTextColor(WHITE);
+            titleText.setTextSize(20);
+            titleText.setTypeface(null, Typeface.BOLD);
+            titleText.setMaxLines(1);
+            titleText.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
+            titleParams.setMargins(dp(16), 0, dp(16), 0);
+            topBar.addView(titleText, titleParams);
+            
+            // Count
+            TextView countText = new TextView(this);
+            countText.setText(items.size() + " items");
+            countText.setTextColor(0xFFB0B0B0);
+            countText.setTextSize(14);
+            countText.setPadding(dp(16), 0, 0, 0);
+            topBar.addView(countText);
+            
+            FrameLayout.LayoutParams topBarParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+            gridOverlay.addView(topBar, topBarParams);
+            
+            // Grid container
+            gridScroll = new ScrollView(this);
+            gridScroll.setFillViewport(true);
+            gridScroll.setVerticalScrollBarEnabled(false);
+            FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1);
+            scrollParams.setMargins(0, dp(70), 0, 0); // Below top bar
+            gridOverlay.addView(gridScroll, scrollParams);
+            
+            // Grid layout (6 columns for TV)
+            gridContainer = new LinearLayout(this);
+            gridContainer.setOrientation(LinearLayout.VERTICAL);
+            gridContainer.setPadding(dp(24), dp(16), dp(24), dp(24));
+            gridContainer.setClipChildren(false);
+            gridScroll.addView(gridContainer);
+            
+            // Grid dimensions
+            gridColumns = 6;
+            final int screenWidth = getResources().getDisplayMetrics().widthPixels;
+            gridTileWidth = (screenWidth - dp(24) * 2 - dp(8) * (gridColumns - 1)) / gridColumns;
+            gridTileHeight = gridTileWidth * 3 / 2; // 2:3 aspect for posters
+            gridArtHeight = gridTileHeight - dp(40); // Space for title
+            
+            // Load first page
+            loadNextGridPage();
+            
+            // Add scroll listener for pagination
+            gridScroll.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (!isLoadingMore && gridContainer != null) {
+                    int scrollRange = gridContainer.getHeight() - gridScroll.getHeight();
+                    if (scrollRange > 0 && scrollY >= scrollRange - dp(LOAD_THRESHOLD_DP)) {
+                        loadNextGridPage();
+                    }
                 }
-            }).start();
-        });
-        setFocusStyleView(backBtn, dp(40));
-        topBar.addView(backBtn, new LinearLayout.LayoutParams(-2, -2));
+            });
+            
+            // Handle focus navigation for grid
+            gridScroll.setOnFocusChangeListener((v, focused) -> {
+                if (focused) {
+                    if (firstContentItem != null) firstContentItem.requestFocus();
+                }
+            });
+            
+            // Override key handling for grid
+            gridOverlay.setFocusableInTouchMode(true);
+            gridOverlay.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+            gridOverlay.setOnKeyListener((v, keyCode, event) -> {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    if (keyCode == KeyEvent.KEYCODE_BACK) {
+                        gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                            recycleGridViews(gridOverlay);
+                            setContentView(root);
+                            if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                                previousHomeFocus.requestFocus();
+                            } else {
+                                requestInitialFocus();
+                            }
+                        }).start();
+                        return true;
+                    }
+                }
+                return false;
+            });
+            
+            setContentView(gridOverlay);
+            gridOverlay.animate().alpha(1f).setDuration(200).start();
+            
+            // Focus first item
+            gridOverlay.post(() -> {
+                if (firstContentItem != null) firstContentItem.requestFocus();
+                else backBtn.requestFocus();
+            });
+            
+        } catch (Exception e) {
+            Log.e("showAllGrid", "Error showing grid", e);
+            Toast.makeText(this, "Error opening grid: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+    
+    private void loadNextGridPage() {
+        if (isLoadingMore || currentGridPage * ITEMS_PER_PAGE >= allGridItems.size()) {
+            return;
+        }
         
-        // Title
-        TextView titleText = new TextView(this);
-        titleText.setText(title);
-        titleText.setTextColor(WHITE);
-        titleText.setTextSize(20);
-        titleText.setTypeface(null, Typeface.BOLD);
-        titleText.setMaxLines(1);
-        titleText.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, -2, 1);
-        titleParams.setMargins(dp(16), 0, dp(16), 0);
-        topBar.addView(titleText, titleParams);
+        isLoadingMore = true;
         
-        // Count
-        TextView countText = new TextView(this);
-        countText.setText(items.size() + " items");
-        countText.setTextColor(0xFFB0B0B0);
-        countText.setTextSize(14);
-        countText.setPadding(dp(16), 0, 0, 0);
-        topBar.addView(countText);
+        int startIndex = currentGridPage * ITEMS_PER_PAGE;
+        int endIndex = Math.min(startIndex + ITEMS_PER_PAGE, allGridItems.size());
         
-        FrameLayout.LayoutParams topBarParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
-        gridOverlay.addView(topBar, topBarParams);
+        if (startIndex >= endIndex) {
+            isLoadingMore = false;
+            return;
+        }
         
-        // Grid container
-        ScrollView gridScroll = new ScrollView(this);
-        gridScroll.setFillViewport(true);
-        gridScroll.setVerticalScrollBarEnabled(false);
-        FrameLayout.LayoutParams scrollParams = new FrameLayout.LayoutParams(-1, -1);
-        scrollParams.setMargins(0, dp(70), 0, 0); // Below top bar
-        gridOverlay.addView(gridScroll, scrollParams);
-        
-        // Grid layout (6 columns for TV)
-        LinearLayout gridContainer = new LinearLayout(this);
-        gridContainer.setOrientation(LinearLayout.VERTICAL);
-        gridContainer.setPadding(dp(24), dp(16), dp(24), dp(24));
-        gridContainer.setClipChildren(false);
-        gridScroll.addView(gridContainer);
-        
-        // Create grid rows (6 columns)
-        final int columns = 6;
-        final int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        final int tileWidth = (screenWidth - dp(24) * 2 - dp(8) * (columns - 1)) / columns;
-        final int tileHeight = tileWidth * 3 / 2; // 2:3 aspect for posters
-        final int artHeight = tileHeight - dp(40); // Space for title
-        
-        for (int rowStart = 0; rowStart < items.size(); rowStart += columns) {
+        // Load items for this page
+        for (int i = startIndex; i < endIndex; i += gridColumns) {
+            int rowStart = i;
+            int rowEnd = Math.min(i + gridColumns, endIndex);
+            
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -518,25 +622,25 @@ public class MainActivity extends Activity {
             rowParams.setMargins(0, 0, 0, dp(16));
             gridContainer.addView(row, rowParams);
             
-            int rowEnd = Math.min(rowStart + columns, items.size());
-            for (int i = rowStart; i < rowEnd; i++) {
-                Entry e = items.get(i);
+            int rowEnd = Math.min(rowStart + gridColumns, endIndex);
+            for (int j = rowStart; j < rowEnd; j++) {
+                Entry e = allGridItems.get(j);
                 
                 // Reuse view from pool if available
                 GridItemViewHolder holder;
                 if (!viewPool.isEmpty()) {
                     holder = viewPool.remove(viewPool.size() - 1);
                     holder.tile.removeAllViews();
-                    holder.tile.setTag(e);
-                    holder.entry = e;
+                    holder.tile.setTag(allGridItems.get(j));
+                    holder.entry = allGridItems.get(j);
                 } else {
-                    holder = createGridItemViewHolder(tileWidth, tileHeight, artHeight, e);
+                    holder = createGridItemViewHolder(gridTileWidth, gridTileHeight, gridArtHeight, e);
                 }
                 
                 holder.entry = e;
                 holder.tile.setTag(e);
                 holder.tile.setOnClickListener(v -> {
-                    gridOverlay.animate().alpha(0f).setDuration(150).withEndAction(() -> {
+                    gridScroll.animate().alpha(0f).setDuration(150).withEndAction(() -> {
                         setContentView(root);
                         if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
                             previousHomeFocus.requestFocus();
@@ -571,7 +675,7 @@ public class MainActivity extends Activity {
                     holder.liveBadge = badge;
                 }
                 
-                LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tileWidth, tileHeight);
+                LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(gridTileWidth, gridTileHeight);
                 tileParams.setMargins(0, 0, dp(8), 0);
                 row.addView(holder.tile, tileParams);
                 
@@ -580,89 +684,23 @@ public class MainActivity extends Activity {
             }
         }
         
-        // Handle focus navigation for grid
-        gridScroll.setOnFocusChangeListener((v, focused) -> {
-            if (focused) {
-                if (firstContentItem != null) firstContentItem.requestFocus();
-            }
-        });
+        currentGridPage++;
+        isLoadingMore = false;
         
-        // Override key handling for grid
-        gridOverlay.setFocusableInTouchMode(true);
-        gridOverlay.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
-        gridOverlay.setOnKeyListener((v, keyCode, event) -> {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (keyCode == KeyEvent.KEYCODE_BACK) {
-                    gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                        recycleGridViews(gridOverlay);
-                        setContentView(root);
-                        if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
-                            previousHomeFocus.requestFocus();
-                        } else {
-                            requestInitialFocus();
-                        }
-                    }).start();
-                    return true;
-                }
-            }
-            return false;
-        });
-        
-        setContentView(gridOverlay);
-        gridOverlay.animate().alpha(1f).setDuration(200).start();
-        
-        // Focus first item
-        gridOverlay.post(() -> {
-            if (firstContentItem != null) firstContentItem.requestFocus();
-            else backBtn.requestFocus();
-        });
-        
-        // Load thumbnails asynchronously
-        for (Entry e : items) {
+        // Load thumbnails for this page
+        for (int i = startIndex; i < endIndex; i++) {
+            Entry e = allGridItems.get(i);
             if (e.logo != null && !e.logo.isEmpty()) {
                 thumbnailWorkers.execute(() -> {
-                    Bitmap bitmap = readThumbnail(e.logo, tileWidth, artHeight);
+                    Bitmap bitmap = readThumbnail(e.logo, gridTileWidth, gridArtHeight);
                     if (bitmap != null) {
                         thumbnailMemory.put(e.logo, bitmap);
                     }
                 });
             }
         }
-    } catch (Exception e) {
-        Log.e("showAllGrid", "Error showing grid", e);
-        Toast.makeText(this, "Error opening grid: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-    }
-}
-    
-    // Recycle grid views when grid is closed
-    private void recycleGridViews(FrameLayout gridOverlay) {
-        if (gridOverlay == null) return;
-        // Find all GridItemViewHolders in the grid and recycle them
-        collectViewsForRecycle(gridOverlay);
     }
     
-    private void collectViewsForRecycle(ViewGroup parent) {
-        for (int i = 0; i < parent.getChildCount(); i++) {
-            View child = parent.getChildAt(i);
-            if (child instanceof LinearLayout) {
-                ViewGroup childGroup = (ViewGroup) child;
-                // Check if this is a grid tile
-                if (child.getTag() instanceof Entry) {
-                    GridItemViewHolder holder = new GridItemViewHolder((LinearLayout) child);
-                    holder.tile = (LinearLayout) child;
-                    if (childGroup.getChildCount() > 0 && childGroup.getChildAt(0) instanceof FrameLayout) {
-                        holder.art = (FrameLayout) childGroup.getChildAt(0);
-                    }
-                    viewPool.add(holder);
-                    child.setTag(null);
-                    child.setOnClickListener(null);
-                } else {
-                    collectViewsForRecycle(childGroup);
-                }
-            }
-        }
-    }
-
     private void addContinueTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Entry> entries) {
         for (int i = 0; i < entries.size(); i++) {
             Entry e = entries.get(i);
