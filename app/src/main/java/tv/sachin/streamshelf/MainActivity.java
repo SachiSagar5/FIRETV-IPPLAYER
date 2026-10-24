@@ -13,11 +13,16 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
 import android.util.LruCache;
+import android.util.Log;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import android.view.Gravity;
 import android.text.InputType;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import org.json.*;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
@@ -37,6 +42,7 @@ import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
+    private static final String TAG = "StreamShelf";
     private static final int BG=0xff101114, PANEL=0xff202126, RED=0xffe50914, WHITE=0xfff5f5f5, MUTED=0xffa7a7ad;
     private static final String DEFAULT_PLAYLIST_NAME="MyList";
     private static final String DEFAULT_PLAYLIST_URL="https://raw.githubusercontent.com/SachiSagar5/MyList-IPTV/main/MyList.m3u";
@@ -55,15 +61,118 @@ public class MainActivity extends Activity {
     private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
     private final AtomicInteger playlistRequestId=new AtomicInteger();
+    private PowerManager.WakeLock wakeLock;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private boolean networkAvailable = true;
+
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
     private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
 
-    @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setFlags(1024,1024);applyImmersiveFullscreen();loadSources();loadFavorites();boolean seededDefault=sources.isEmpty();if(seededDefault){sources.add(new Source(DEFAULT_PLAYLIST_NAME,DEFAULT_PLAYLIST_URL));activeSource=0;}buildHome();if(seededDefault)saveSources();if(!sources.isEmpty())loadPlaylist();else showWelcome();}
+    @Override public void onCreate(Bundle b){
+        super.onCreate(b);
+        setupExceptionHandler();
+        getWindow().setFlags(1024,1024);
+        applyImmersiveFullscreen();
+        initWakeLock();
+        initNetworkMonitoring();
+        loadSources();
+        loadFavorites();
+        boolean seededDefault=sources.isEmpty();
+        if(seededDefault){
+            sources.add(new Source(DEFAULT_PLAYLIST_NAME,DEFAULT_PLAYLIST_URL));
+            activeSource=0;
+        }
+        buildHome();
+        if(seededDefault)saveSources();
+        if(!sources.isEmpty())loadPlaylist();else showWelcome();
+    }
+
+    private void setupExceptionHandler() {
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override public void uncaughtException(Thread thread, Throwable ex) {
+                Log.e(TAG, "UNCAUGHT EXCEPTION", ex);
+                saveCrashLog(ex);
+                // Try to show error UI instead of crashing silently
+                runOnUiThread(() -> {
+                    try {
+                        if (playing) {
+                            showPlaybackError();
+                            return;
+                        }
+                    } catch (Exception ignored) {}
+                });
+                // Give UI time to show error before killing process
+                try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                android.os.Process.killProcess(android.os.Process.myPid());
+                System.exit(10);
+            }
+        });
+    }
+
+    private void saveCrashLog(Throwable ex) {
+        try {
+            File dir = new File(getCacheDir(), "crash_logs");
+            if (!dir.exists()) dir.mkdirs();
+            File logFile = new File(dir, "crash_" + System.currentTimeMillis() + ".txt");
+            try (FileWriter fw = new FileWriter(logFile)) {
+                fw.write("StreamShelf Crash Report\n");
+                fw.write("Time: " + new Date() + "\n");
+                fw.write("Version: 1.4.2\n");
+                fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
+                fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
+                fw.write("Playing: " + playing + "\n");
+                if (currentEntry != null) {
+                    fw.write("Entry: " + currentEntry.name + "\n");
+                    fw.write("URL: " + currentEntry.url + "\n");
+                }
+                fw.write("\nStack Trace:\n");
+                ex.printStackTrace(new PrintWriter(fw));
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void initWakeLock() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE, "StreamShelf::WakeLock");
+        wakeLock.setReferenceCounted(false);
+    }
+
+    private void initNetworkMonitoring() {
+        connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                networkAvailable = true;
+                runOnUiThread(() -> {
+                    if (playing && player != null && player.getPlaybackState() == Player.STATE_IDLE) {
+                        // Network restored, try to resume if we were buffering
+                        Log.d(TAG, "Network restored, player state: " + player.getPlaybackState());
+                    }
+                });
+            }
+            @Override public void onLost(Network network) {
+                networkAvailable = false;
+                runOnUiThread(() -> {
+                    if (playing && playerLoadingPanel != null) {
+                        playerLoadingText.setText("Network lost. Waiting for connection…");
+                        playerLoadingPanel.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        };
+        NetworkRequest request = new NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build();
+        connectivityManager.registerNetworkCallback(request, networkCallback);
+    }
+
     private void applyImmersiveFullscreen(){getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);}
     @Override public void onWindowFocusChanged(boolean hasFocus){super.onWindowFocusChanged(hasFocus);if(hasFocus)applyImmersiveFullscreen();}
     private int dp(float x){return (int)(x*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable rounded(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private TextView text(String s,int size,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);return t;}
+
+    // ... rest of the methods remain the same until play() method
     private void buildHome(){
         categoryTabs.clear();
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
@@ -160,12 +269,182 @@ public class MainActivity extends Activity {
     private void sourceDialog(){LinearLayout box=new LinearLayout(this);box.setPadding(dp(20),dp(10),dp(20),0);box.setOrientation(LinearLayout.VERTICAL);EditText name=new EditText(this);name.setHint("Playlist name");box.addView(name);EditText url=new EditText(this);url.setHint("M3U URL (http:// or https://)");url.setSingleLine(true);url.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);box.addView(url);String[] opts=sources.stream().map(x->x.name).toArray(String[]::new);if(opts.length>0){Spinner sp=new Spinner(this);ArrayList<String> labels=new ArrayList<>();labels.add("Save as new playlist");labels.addAll(Arrays.asList(opts));sp.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));box.addView(sp);new AlertDialog.Builder(this).setTitle("Playlist sources").setView(box).setPositiveButton("Save",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){if(n.isEmpty())n="Playlist "+(sources.size()+1);if(sp.getSelectedItemPosition()>0){activeSource=sp.getSelectedItemPosition()-1;}else sources.add(new Source(n,u));saveSources();loadPlaylist();}}).setNeutralButton("Switch / remove",(d,w)->manageSources()).setNegativeButton("Cancel",null).show();}else new AlertDialog.Builder(this).setTitle("Add playlist source").setView(box).setPositiveButton("Add",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){sources.add(new Source(n.isEmpty()?"Playlist 1":n,u));activeSource=sources.size()-1;saveSources();loadPlaylist();}}).setNegativeButton("Cancel",null).show();}
     private void manageSources(){if(sources.isEmpty())return;String[] names=sources.stream().map(x->x.name).toArray(String[]::new);new AlertDialog.Builder(this).setTitle("Switch playlist").setItems(names,(d,w)->{activeSource=w;loadPlaylist();new AlertDialog.Builder(this).setMessage("Remove "+sources.get(w).name+"?").setPositiveButton("Remove",(a,b)->{sources.remove(w);activeSource=Math.max(0,Math.min(activeSource,sources.size()-1));saveSources();entries.clear();if(sources.isEmpty()){showWelcome();sourceLabel.setText("Choose a playlist source");}else loadPlaylist();}).setNegativeButton("Keep",null).show();}).setNegativeButton("Close",null).show();}
     private void searchDialog(){EditText q=new EditText(this);q.setSingleLine(true);q.setHint("Search this playlist");new AlertDialog.Builder(this).setTitle("Search").setView(q).setPositiveButton("Search",(d,w)->{String needle=q.getText().toString().toLowerCase(Locale.ROOT);content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;for(Entry e:entries)if(e.name.toLowerCase(Locale.ROOT).contains(needle)){Button b=button(e.name);b.setId(View.generateViewId());b.setTag(e);b.setOnClickListener(v->play(e));content.addView(b,new LinearLayout.LayoutParams(-1,dp(56)));if(firstContentItem==null)firstContentItem=b;}if(content.getChildCount()==0){TextView empty=text("No matches",18,MUTED);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;}wireMainFocus();animateContentIn();focusFirstContent();}).setNegativeButton("Cancel",null).show();}
-    private void play(Entry e){previousHomeFocus=getCurrentFocus();currentEntry=e;playerOverlay=new FrameLayout(this);playerOverlay.setBackgroundColor(Color.BLACK);playerOverlay.setAlpha(0f);playerView=new PlayerView(this);playerView.setUseController(true);playerView.setControllerAutoShow(true);playerView.setControllerHideOnTouch(true);playerView.setControllerShowTimeoutMs(6500);playerView.setKeepContentOnPlayerReset(true);playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);playerView.setFocusable(true);playerOverlay.addView(playerView,new FrameLayout.LayoutParams(-1,-1));buildPlayerStatusPanels();setContentView(playerOverlay);playerOverlay.animate().alpha(1f).setDuration(140).start();playing=true;startPlayback();playerView.requestFocus();}
-    private void buildPlayerStatusPanels(){playerLoadingPanel=new LinearLayout(this);playerLoadingPanel.setOrientation(LinearLayout.VERTICAL);playerLoadingPanel.setGravity(Gravity.CENTER);playerLoadingPanel.setPadding(dp(28),dp(20),dp(28),dp(20));playerLoadingPanel.setBackground(rounded(0xdd17191e,12));ProgressBar spinner=new ProgressBar(this);playerLoadingPanel.addView(spinner,new LinearLayout.LayoutParams(dp(42),dp(42)));playerLoadingText=text("Connecting to stream…",17,WHITE);playerLoadingText.setGravity(Gravity.CENTER);playerLoadingText.setPadding(0,dp(12),0,0);playerLoadingPanel.addView(playerLoadingText);FrameLayout.LayoutParams loadingParams=new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER);playerOverlay.addView(playerLoadingPanel,loadingParams);
+    private void play(Entry e){
+        try {
+            previousHomeFocus=getCurrentFocus();
+            currentEntry=e;
+            playerOverlay=new FrameLayout(this);
+            playerOverlay.setBackgroundColor(Color.BLACK);
+            playerOverlay.setAlpha(0f);
+            playerView=new PlayerView(this);
+            playerView.setUseController(true);
+            playerView.setControllerAutoShow(true);
+            playerView.setControllerHideOnTouch(true);
+            playerView.setControllerShowTimeoutMs(6500);
+            playerView.setKeepContentOnPlayerReset(true);
+            playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+            playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);
+            playerView.setFocusable(true);
+            playerOverlay.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
+            buildPlayerStatusPanels();
+            setContentView(playerOverlay);
+            playerOverlay.animate().alpha(1f).setDuration(140).start();
+            playing=true;
+            acquireWakeLock();
+            startPlayback();
+            playerView.requestFocus();
+        } catch (Exception ex) {
+            Log.e(TAG, "Error initializing playback", ex);
+            showPlaybackError();
+        }
+    }
+
+    private void acquireWakeLock() {
+        if (wakeLock != null && !wakeLock.isHeld()) {
+            try { wakeLock.acquire(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try { wakeLock.release(); } catch (Exception ignored) {}
+        }
+    }
+
+    private void buildPlayerStatusPanels(){
+        playerLoadingPanel=new LinearLayout(this);playerLoadingPanel.setOrientation(LinearLayout.VERTICAL);playerLoadingPanel.setGravity(Gravity.CENTER);playerLoadingPanel.setPadding(dp(28),dp(20),dp(28),dp(20));playerLoadingPanel.setBackground(rounded(0xdd17191e,12));ProgressBar spinner=new ProgressBar(this);playerLoadingPanel.addView(spinner,new LinearLayout.LayoutParams(dp(42),dp(42)));playerLoadingText=text("Connecting to stream…",17,WHITE);playerLoadingText.setGravity(Gravity.CENTER);playerLoadingText.setPadding(0,dp(12),0,0);playerLoadingPanel.addView(playerLoadingText);FrameLayout.LayoutParams loadingParams=new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER);playerOverlay.addView(playerLoadingPanel,loadingParams);
         playerErrorPanel=new LinearLayout(this);playerErrorPanel.setOrientation(LinearLayout.VERTICAL);playerErrorPanel.setGravity(Gravity.CENTER);playerErrorPanel.setPadding(dp(28),dp(20),dp(28),dp(20));playerErrorPanel.setBackground(rounded(0xff202126,12));TextView error=text("This stream could not be played. Check the playlist or network, then retry.",18,WHITE);error.setGravity(Gravity.CENTER);error.setMaxWidth(dp(460));playerErrorPanel.addView(error);LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER);retryPlaybackButton=button("Retry");retryPlaybackButton.setOnClickListener(v->startPlayback());Button browse=button("Back to browse");LinearLayout.LayoutParams actionParams=new LinearLayout.LayoutParams(-2,dp(54));actionParams.setMargins(dp(8),dp(14),dp(8),0);actions.addView(retryPlaybackButton,actionParams);actions.addView(browse,actionParams);browse.setOnClickListener(v->onBackPressed());playerErrorPanel.addView(actions);playerOverlay.addView(playerErrorPanel,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));playerErrorPanel.setVisibility(View.GONE);}
-    private void startPlayback(){if(currentEntry==null||playerOverlay==null)return;final Entry entry=currentEntry;if(player!=null){player.release();player=null;}playerErrorPanel.setVisibility(View.GONE);playerLoadingText.setText("Connecting to "+entry.name+"…");playerLoadingPanel.setVisibility(View.VISIBLE);androidx.media3.exoplayer.LoadControl loadControl=new androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(8000,45000,1000,3000).build();player=new ExoPlayer.Builder(this).setLoadControl(loadControl).build();player.setHandleAudioBecomingNoisy(true);player.addListener(new Player.Listener(){@Override public void onPlaybackStateChanged(int state){if(player==null)return;if(state==Player.STATE_BUFFERING){playerLoadingText.setText("Buffering "+entry.name+"…");playerLoadingPanel.setVisibility(View.VISIBLE);}else if(state==Player.STATE_READY){playerLoadingPanel.setVisibility(View.GONE);playerErrorPanel.setVisibility(View.GONE);}else if(state==Player.STATE_IDLE&&player.getPlayerError()!=null)showPlaybackError();}@Override public void onPlayerError(PlaybackException error){showPlaybackError();}});playerView.setPlayer(player);player.setMediaItem(MediaItem.fromUri(entry.url));player.prepare();player.play();}
-    private void showPlaybackError(){if(playerLoadingPanel!=null)playerLoadingPanel.setVisibility(View.GONE);if(playerErrorPanel!=null){playerErrorPanel.setVisibility(View.VISIBLE);if(retryPlaybackButton!=null)retryPlaybackButton.requestFocus();}}
-    @Override public void onBackPressed(){if(playing){if(player!=null){player.release();player=null;}playing=false;currentEntry=null;setContentView(root);root.setAlpha(0f);root.animate().alpha(1f).setDuration(140).withEndAction(()->{if(previousHomeFocus!=null&&previousHomeFocus.isShown()&&previousHomeFocus.isFocusable())previousHomeFocus.requestFocus();else requestInitialFocus();}).start();playerView=null;playerOverlay=null;playerLoadingPanel=null;playerErrorPanel=null;return;}super.onBackPressed();}
+    private void startPlayback(){
+        if (currentEntry == null || playerOverlay == null) return;
+        final Entry entry = currentEntry;
+
+        try {
+            if (player != null) {
+                try { player.release(); } catch (Exception ignored) {}
+                player = null;
+            }
+
+            playerErrorPanel.setVisibility(View.GONE);
+            playerLoadingText.setText("Connecting to " + entry.name + "…");
+            playerLoadingPanel.setVisibility(View.VISIBLE);
+
+            androidx.media3.exoplayer.LoadControl loadControl = new androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(8000, 45000, 1000, 3000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build();
+
+            player = new ExoPlayer.Builder(this)
+                .setLoadControl(loadControl)
+                .build();
+
+            player.setHandleAudioBecomingNoisy(true);
+
+            player.addListener(new Player.Listener() {
+                @Override public void onPlaybackStateChanged(int state) {
+                    if (player == null) return;
+                    runOnUiThread(() -> {
+                        try {
+                            if (state == Player.STATE_BUFFERING) {
+                                playerLoadingText.setText("Buffering " + entry.name + "…");
+                                playerLoadingPanel.setVisibility(View.VISIBLE);
+                            } else if (state == Player.STATE_READY) {
+                                playerLoadingPanel.setVisibility(View.GONE);
+                                playerErrorPanel.setVisibility(View.GONE);
+                            } else if (state == Player.STATE_ENDED) {
+                                onPlaybackEnded();
+                            } else if (state == Player.STATE_IDLE && player.getPlayerError() != null) {
+                                showPlaybackError();
+                            }
+                        } catch (Exception ignored) {}
+                    });
+                }
+
+                @Override public void onPlayerError(PlaybackException error) {
+                    Log.e(TAG, "Playback error: " + error.getMessage(), error);
+                    runOnUiThread(() -> showPlaybackError());
+                }
+
+                @Override public void onIsPlayingChanged(boolean isPlaying) {
+                    // Track playing state
+                }
+            });
+
+            playerView.setPlayer(player);
+
+            // Create MediaItem with robust configuration for direct MP4/TS streams
+            MediaItem mediaItem = new MediaItem.Builder()
+                .setUri(entry.url)
+                .setMimeType(inferMimeType(entry.url))
+                .build();
+
+            player.setMediaItem(mediaItem);
+            player.prepare();
+            player.play();
+
+        } catch (Exception ex) {
+            Log.e(TAG, "Error starting playback", ex);
+            showPlaybackError();
+        }
+    }
+
+    private String inferMimeType(String url) {
+        String lower = url.toLowerCase(Locale.ROOT);
+        if (lower.contains(".m3u8") || lower.contains("hls")) return "application/x-mpegURL";
+        if (lower.contains(".mpd") || lower.contains("dash")) return "application/dash+xml";
+        if (lower.endsWith(".mp4") || lower.contains(".mp4?")) return "video/mp4";
+        if (lower.endsWith(".ts") || lower.contains(".ts?")) return "video/mp2t";
+        if (lower.endsWith(".mkv") || lower.contains(".mkv?")) return "video/x-matroska";
+        if (lower.endsWith(".webm") || lower.contains(".webm?")) return "video/webm";
+        return null; // Let ExoPlayer infer
+    }
+
+    private void showPlaybackError() {
+        runOnUiThread(() -> {
+            try {
+                if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.GONE);
+                if (playerErrorPanel != null) {
+                    playerErrorPanel.setVisibility(View.VISIBLE);
+                    if (retryPlaybackButton != null) retryPlaybackButton.requestFocus();
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private void onPlaybackEnded() {
+        // Auto-return to browse when stream ends (e.g., VOD movie finishes)
+        runOnUiThread(() -> {
+            if (playing) {
+                Toast.makeText(this, "Playback finished", Toast.LENGTH_SHORT).show();
+                onBackPressed();
+            }
+        });
+    }
+    @Override public void onBackPressed(){
+        if (playing) {
+            releaseWakeLock();
+            if (player != null) {
+                try { player.release(); } catch (Exception ignored) {}
+                player = null;
+            }
+            playing = false;
+            currentEntry = null;
+            setContentView(root);
+            root.setAlpha(0f);
+            root.animate().alpha(1f).setDuration(140).withEndAction(() -> {
+                if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                    previousHomeFocus.requestFocus();
+                } else {
+                    requestInitialFocus();
+                }
+            }).start();
+            playerView = null;
+            playerOverlay = null;
+            playerLoadingPanel = null;
+            playerErrorPanel = null;
+            return;
+        }
+        super.onBackPressed();
+    }
 
     private void loadFavorites(){Set<String> saved=getPreferences(0).getStringSet("favorites",Collections.emptySet());favoriteKeys.addAll(saved);}
     private boolean isFavorite(Entry e){try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}}
@@ -174,7 +453,47 @@ public class MainActivity extends Activity {
     private void saveSources(){try{JSONArray a=new JSONArray();for(Source s:sources){JSONObject o=new JSONObject();o.put("name",s.name);o.put("url",s.url);a.put(o);}Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,secretKey());byte[] iv=c.getIV(),data=c.doFinal(a.toString().getBytes(StandardCharsets.UTF_8));byte[] out=new byte[2+iv.length+data.length];out[0]=(byte)(iv.length>>8);out[1]=(byte)iv.length;System.arraycopy(iv,0,out,2,iv.length);System.arraycopy(data,0,out,2+iv.length,data.length);getPreferences(0).edit().putString("sources_enc",Base64.encodeToString(out,Base64.NO_WRAP)).putInt("active",activeSource).apply();}catch(Exception e){status.setText("Could not securely save playlist URLs.");}}
     private javax.crypto.SecretKey secretKey() throws Exception {KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);String alias="StreamShelfKey";if(ks.containsAlias(alias))return (javax.crypto.SecretKey)ks.getKey(alias,null);KeyGenerator g=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");g.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return g.generateKey();}
     @Override public void onLowMemory(){super.onLowMemory();thumbnailMemory.evictAll();}
-    @Override protected void onStart(){super.onStart();if(player!=null&&playing)player.play();}
-    @Override protected void onStop(){if(player!=null)player.pause();super.onStop();}
-    @Override protected void onDestroy(){playlistRequestId.incrementAndGet();playlistWorkers.shutdownNow();if(player!=null)player.release();thumbnailWorkers.shutdownNow();super.onDestroy();}
+
+    @Override protected void onStart(){
+        super.onStart();
+        if (player != null && playing) {
+            player.play();
+        }
+    }
+
+    @Override protected void onStop(){
+        if (player != null) {
+            try { player.pause(); } catch (Exception ignored) {}
+        }
+        super.onStop();
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        // Don't release player here - let onStop handle it
+        // This prevents issues when temporarily losing focus (e.g., system dialogs)
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        applyImmersiveFullscreen();
+        if (player != null && playing) {
+            player.play();
+        }
+    }
+
+    @Override protected void onDestroy(){
+        playlistRequestId.incrementAndGet();
+        playlistWorkers.shutdownNow();
+        thumbnailWorkers.shutdownNow();
+        if (networkCallback != null && connectivityManager != null) {
+            try { connectivityManager.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
+        }
+        releaseWakeLock();
+        if (player != null) {
+            try { player.release(); } catch (Exception ignored) {}
+            player = null;
+        }
+        super.onDestroy();
+    }
 }

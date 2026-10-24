@@ -6,14 +6,16 @@ android {
     defaultConfig {
         applicationId 'tv.sachin.streamshelf'
         minSdk 24
-        targetSdk 28
-        versionCode 8
-        versionName '1.4.1'
+        targetSdk 34
+        versionCode 9
+        versionName '1.4.2'
     }
 }
 
 dependencies {
     implementation 'androidx.media3:media3-exoplayer:1.6.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.6.1'
+    implementation 'androidx.media3:media3-exoplayer-dash:1.6.1'
     implementation 'androidx.media3:media3-ui:1.6.1'
+    implementation 'androidx.media3:media3-common:1.6.1'
 }
