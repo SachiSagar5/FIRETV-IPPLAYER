@@ -183,7 +183,7 @@ public class MainActivity extends Activity {
     private void buildHome(){
         categoryTabs.clear();
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
-        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(15),dp(14),dp(13),dp(12));sidebar.setBackgroundColor(0xff080c12);root.addView(sidebar,new LinearLayout.LayoutParams(dp(174),-1));
+        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);root.addView(sidebar,new LinearLayout.LayoutParams(dp(180),-1));
         LinearLayout brand=new LinearLayout(this);brand.setGravity(Gravity.CENTER_VERTICAL);brand.setPadding(dp(4),dp(4),0,dp(27));sidebar.addView(brand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",27,RED);brand.addView(mark);TextView wordmark=text("  IPTV ",21,WHITE);wordmark.setTypeface(null,Typeface.BOLD);brand.addView(wordmark);TextView product=text("Player",21,RED);product.setTypeface(null,Typeface.BOLD);brand.addView(product);
         nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];TextView v=text(item[1]+"   "+tab,16,WHITE);v.setTag(tab);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER_VERTICAL);v.setId(View.generateViewId());v.setPadding(dp(14),0,dp(7),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
@@ -195,7 +195,18 @@ public class MainActivity extends Activity {
     private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",27,WHITE);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Connect a playlist to start building your home screen.",16,MUTED);content.addView(sub);Button b=button("Add playlist");b.setId(View.generateViewId());b.setOnClickListener(v->sourceDialog());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(54));p.setMargins(0,dp(18),0,0);content.addView(b,p);firstContentItem=b;}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
     private void refreshRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
-        if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries){if(category.equals("My List")?isFavorite(e):e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);}
+        if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
+        ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries){if(category.equals("My List")?isFavorite(e):e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);}
+        // Sort Live TV: Kannada channels first
+        if (category.equals("Live TV")) {
+            shown.sort((a, b) -> {
+                boolean aKannada = isKannadaChannel(a);
+                boolean bKannada = isKannadaChannel(b);
+                if (aKannada && !bKannada) return -1;
+                if (!aKannada && bKannada) return 1;
+                return 0;
+            });
+        }
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading your playlist…":category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.",20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
         boolean portrait=category.equals("Movies")||category.equals("Series");for(String group:groups.keySet()){TextView heading=text(group+"   ·   "+groups.get(group).size(),20,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(15),0,dp(9));content.addView(heading);HorizontalScrollView hsv=createShelfScroll();LinearLayout row=(LinearLayout)hsv.getChildAt(0);content.addView(hsv);shelfRows.add(hsv);addShelfTiles(hsv,row,groups.get(group),0,portrait);}wireMainFocus();animateContentIn();
@@ -209,7 +220,7 @@ public class MainActivity extends Activity {
     }
     private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(e.type.equals(type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);TextView name=text(title+"  ›",20,WHITE);name.setTypeface(null,Typeface.BOLD);heading.addView(name,new LinearLayout.LayoutParams(0,dp(36),1));TextView seeAll=text("See All  ›",13,0xffc7cad1);seeAll.setFocusable(true);seeAll.setClickable(true);seeAll.setGravity(Gravity.CENTER);seeAll.setPadding(dp(10),dp(5),dp(10),dp(5));setFocusStyle(seeAll,Color.TRANSPARENT,6);seeAll.setOnClickListener(v->{category=title;updateCategoryTabs();refreshRows();focusFirstContent();});heading.addView(seeAll);content.addView(heading);HorizontalScrollView hsv=createShelfScroll();LinearLayout row=(LinearLayout)hsv.getChildAt(0);content.addView(hsv);shelfRows.add(hsv);addHomeTiles(hsv,row,shelf,0,live);}
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
-    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text(live?"▶":"▣",25,0xff626b78);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(live?ImageView.ScaleType.FIT_CENTER:ImageView.ScaleType.CENTER_CROP);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setOnClickListener(v->{category=live?"Live TV":shelf.get(0).type;updateCategoryTabs();refreshRows();focusFirstContent();});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
+    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text(live?"▶":"▣",25,0xff626b78);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setOnClickListener(v->{category=live?"Live TV":shelf.get(0).type;updateCategoryTabs();refreshRows();focusFirstContent();});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
@@ -219,7 +230,7 @@ public class MainActivity extends Activity {
             if(firstContentItem==null)firstContentItem=tile;
             FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
             TextView placeholder=text(e.type.equals("Live")?"▶":"▣",32,0xff747781);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
-            ImageView image=new ImageView(this);image.setScaleType(portrait?ImageView.ScaleType.CENTER_CROP:ImageView.ScaleType.FIT_CENTER);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
+            ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
@@ -258,8 +269,13 @@ public class MainActivity extends Activity {
             int key = event.getKeyCode();
 
             if (playing) {
-                // Back key: hide controls first, then exit
+                // Back key: dismiss error panel, then hide controls, then exit
                 if (key == android.view.KeyEvent.KEYCODE_BACK) {
+                    if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
+                        playerErrorPanel.setVisibility(View.GONE);
+                        showControls(true);
+                        return true;
+                    }
                     if (controlsVisible) {
                         showControls(false);
                         return true;
@@ -307,11 +323,23 @@ public class MainActivity extends Activity {
                     return true;
                 }
 
-                // D-pad Up/Down: navigate between control groups (top bar -> timeline -> bottom controls)
+                // D-pad Up/Down: channel switching for live TV, control navigation for VOD
                 if (key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
                     if (!controlsVisible) {
                         showControls(true);
                         return true;
+                    }
+                    // For live TV, Up/Down switches channels when not focused on controls
+                    if (currentEntry != null && "Live".equals(currentEntry.type)) {
+                        View focused = getCurrentFocus();
+                        // Only switch channels if focus is on video area (not on controls)
+                        boolean onControls = focused == progressBar || isBottomControl(focused) 
+                                || focused == backBtn || focused == ccBtn || focused == settingsBtn
+                                || focused == centerPlayPauseBtn;
+                        if (!onControls) {
+                            switchChannel(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+                            return true;
+                        }
                     }
                     handleVerticalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
                     return true;
@@ -328,8 +356,32 @@ public class MainActivity extends Activity {
                         // Seeking handled by SeekBar's internal key handling
                         return false; // Let SeekBar handle it
                     }
+                    // Handle error panel navigation
+                    if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
+                        if (focused == retryPlaybackButton) {
+                            browse.requestFocus();
+                        } else if (focused == browse) {
+                            retryPlaybackButton.requestFocus();
+                        }
+                        return true;
+                    }
                     handleHorizontalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
                     return true;
+                }
+
+                // D-pad Up/Down on error panel
+                if ((key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN)
+                        && playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
+                    View focused = getCurrentFocus();
+                    if (focused == retryPlaybackButton || focused == browse) {
+                        // Toggle between the two buttons
+                        if (focused == retryPlaybackButton) {
+                            browse.requestFocus();
+                        } else {
+                            retryPlaybackButton.requestFocus();
+                        }
+                        return true;
+                    }
                 }
 
                 // Any other key while playing: show controls
@@ -811,9 +863,16 @@ public class MainActivity extends Activity {
         playerErrorPanel.addView(error);
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
         retryPlaybackButton = button("Retry");
         retryPlaybackButton.setOnClickListener(v -> startPlayback());
+        retryPlaybackButton.setFocusable(true);
+        retryPlaybackButton.setFocusableInTouchMode(true);
+        setFocusStyle(retryPlaybackButton, RED, 6);
         Button browse = button("Back to browse");
+        browse.setFocusable(true);
+        browse.setFocusableInTouchMode(true);
+        setFocusStyle(browse, 0xFF262D38, 6);
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-2, dp(54));
         actionParams.setMargins(dp(8), dp(14), dp(8), 0);
         actions.addView(retryPlaybackButton, actionParams);
@@ -1090,6 +1149,44 @@ public class MainActivity extends Activity {
         player.seekTo(newPos);
         cancelHideControls();
         scheduleHideControls();
+    }
+
+    private void switchChannel(boolean next) {
+        if (entries == null || entries.isEmpty()) return;
+        
+        // Get all live entries
+        ArrayList<Entry> liveEntries = new ArrayList<>();
+        for (Entry e : entries) {
+            if ("Live".equals(e.type)) liveEntries.add(e);
+        }
+        if (liveEntries.isEmpty()) return;
+        
+        // Find current index
+        int currentIndex = -1;
+        for (int i = 0; i < liveEntries.size(); i++) {
+            if (liveEntries.get(i).url.equals(currentEntry.url)) {
+                currentIndex = i;
+                break;
+            }
+        }
+        if (currentIndex == -1) return;
+        
+        // Calculate next/prev index with wraparound
+        int newIndex = next ? (currentIndex + 1) % liveEntries.size() : (currentIndex - 1 + liveEntries.size()) % liveEntries.size();
+        Entry newEntry = liveEntries.get(newIndex);
+        
+        // Play new channel
+        play(newEntry);
+        Toast.makeText(this, newEntry.name, Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean isKannadaChannel(Entry e) {
+        String text = (e.group + " " + e.name).toLowerCase(Locale.ROOT);
+        return text.contains("kannada") || text.contains("kannad") 
+                || text.contains("karnataka") || text.contains("suvarna")
+                || text.contains("uddhav") || text.contains("kasthuri")
+                || text.contains("janashri") || text.contains("tv9 kannada")
+                || text.contains("public tv") || text.contains("news18 kannada");
     }
 
     private void showSubtitleDialog() {
