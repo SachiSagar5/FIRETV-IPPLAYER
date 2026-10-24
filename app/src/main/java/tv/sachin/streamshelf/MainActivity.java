@@ -362,17 +362,22 @@ public class MainActivity extends Activity {
         topBar.setBackground(topGradient);
         
         // Back button
-        TextView backBtn = new TextView(this);
-        backBtn.setText("←");
-        backBtn.setTextColor(WHITE);
-        backBtn.setTextSize(24);
-        backBtn.setTypeface(null, Typeface.BOLD);
+        ImageView backBtn = new ImageView(this);
+        backBtn.setImageResource(R.drawable.ic_back);
+        backBtn.setColorFilter(WHITE);
         backBtn.setPadding(dp(12), dp(8), dp(12), dp(8));
         backBtn.setFocusable(true);
         backBtn.setClickable(true);
         backBtn.setContentDescription("Back");
         backBtn.setOnClickListener(v -> {
-            gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> setContentView(root)).start();
+            gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+                setContentView(root);
+                if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                    previousHomeFocus.requestFocus();
+                } else {
+                    requestInitialFocus();
+                }
+            }).start();
         });
         setFocusStyleView(backBtn, dp(40));
         topBar.addView(backBtn, new LinearLayout.LayoutParams(-2, -2));
@@ -408,18 +413,19 @@ public class MainActivity extends Activity {
         scrollParams.setMargins(0, dp(70), 0, 0); // Below top bar
         gridOverlay.addView(gridScroll, scrollParams);
         
-        // Grid layout (3 columns for TV)
+        // Grid layout (6 columns for TV)
         LinearLayout gridContainer = new LinearLayout(this);
         gridContainer.setOrientation(LinearLayout.VERTICAL);
         gridContainer.setPadding(dp(24), dp(16), dp(24), dp(24));
         gridContainer.setClipChildren(false);
         gridScroll.addView(gridContainer);
         
-        // Create grid rows (3 columns)
-        int columns = 3;
-        int tileWidth = (getResources().getDisplayMetrics().widthPixels - dp(24) * 4) / columns;
-        int tileHeight = tileWidth * 3 / 2; // 2:3 aspect for posters
-        int artHeight = tileHeight - dp(40); // Space for title
+        // Create grid rows (6 columns)
+        final int columns = 6;
+        final int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        final int tileWidth = (screenWidth - dp(24) * 2 - dp(8) * (columns - 1)) / columns;
+        final int tileHeight = tileWidth * 3 / 2; // 2:3 aspect for posters
+        final int artHeight = tileHeight - dp(40); // Space for title
         
         for (int rowStart = 0; rowStart < items.size(); rowStart += columns) {
             LinearLayout row = new LinearLayout(this);
@@ -444,6 +450,11 @@ public class MainActivity extends Activity {
                 tile.setOnClickListener(v -> {
                     gridOverlay.animate().alpha(0f).setDuration(150).withEndAction(() -> {
                         setContentView(root);
+                        if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                            previousHomeFocus.requestFocus();
+                        } else {
+                            requestInitialFocus();
+                        }
                         play(e);
                     }).start();
                 });
