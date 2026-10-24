@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
     private final ThreadPoolExecutor thumbnailWorkers=new ThreadPoolExecutor(3,3,0,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>(128),new ThreadPoolExecutor.DiscardOldestPolicy());
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private View previousHomeFocus; private boolean playing=false;
-    private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton;
+    private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton, browseBtn;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
     private final AtomicInteger playlistRequestId=new AtomicInteger();
     private PowerManager.WakeLock wakeLock;
@@ -372,7 +372,7 @@ public class MainActivity extends Activity {
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setTag(e);
             art.addView(image, new FrameLayout.LayoutParams(-1, -1));
-            hero.post(() -> loadThumbnail(image, e.logo, hero.getWidth(), hero.getHeight()));
+            art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight()));
             
             // Progress bar overlay
             if (duration > 0) {
@@ -471,7 +471,7 @@ public class MainActivity extends Activity {
         details.setGravity(Gravity.CENTER_VERTICAL);
         details.setOrientation(LinearLayout.VERTICAL);
         details.setPadding(dp(24),dp(12),0,dp(12));
-        FrameLayout.LayoutParams detailParams=new LinearLayout.LayoutParams(dp(450),-1,Gravity.LEFT|Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams detailParams=new FrameLayout.LayoutParams(dp(450),-1,Gravity.LEFT|Gravity.CENTER_VERTICAL);
         hero.addView(details,detailParams);
 
         String badgeText = "WELCOME";
@@ -758,8 +758,8 @@ public class MainActivity extends Activity {
                     // Handle error panel navigation
                     if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
                         if (focused == retryPlaybackButton) {
-                            browse.requestFocus();
-                        } else if (focused == browse) {
+                            browseBtn.requestFocus();
+                        } else if (focused == browseBtn) {
                             retryPlaybackButton.requestFocus();
                         }
                         return true;
@@ -772,10 +772,10 @@ public class MainActivity extends Activity {
                 if ((key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN)
                         && playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
                     View focused = getCurrentFocus();
-                    if (focused == retryPlaybackButton || focused == browse) {
+                    if (focused == retryPlaybackButton || focused == browseBtn) {
                         // Toggle between the two buttons
                         if (focused == retryPlaybackButton) {
-                            browse.requestFocus();
+                            browseBtn.requestFocus();
                         } else {
                             retryPlaybackButton.requestFocus();
                         }
@@ -1268,15 +1268,15 @@ public class MainActivity extends Activity {
         retryPlaybackButton.setFocusable(true);
         retryPlaybackButton.setFocusableInTouchMode(true);
         setFocusStyle(retryPlaybackButton, RED, 6);
-        Button browse = button("Back to browse");
-        browse.setFocusable(true);
-        browse.setFocusableInTouchMode(true);
-        setFocusStyle(browse, 0xFF262D38, 6);
+        browseBtn = button("Back to browse");
+        browseBtn.setFocusable(true);
+        browseBtn.setFocusableInTouchMode(true);
+        setFocusStyle(browseBtn, 0xFF262D38, 6);
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-2, dp(54));
         actionParams.setMargins(dp(8), dp(14), dp(8), 0);
         actions.addView(retryPlaybackButton, actionParams);
-        actions.addView(browse, actionParams);
-        browse.setOnClickListener(v -> onBackPressed());
+        actions.addView(browseBtn, actionParams);
+        browseBtn.setOnClickListener(v -> onBackPressed());
         playerErrorPanel.addView(actions);
         playerOverlay.addView(playerErrorPanel, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
         playerErrorPanel.setVisibility(View.GONE);
