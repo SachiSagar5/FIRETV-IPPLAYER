@@ -366,6 +366,32 @@ public class MainActivity extends Activity {
     
     // View pool for recycling grid items
     private final ArrayList<GridItemViewHolder> viewPool = new ArrayList<>();
+    private final ArrayList<GridItemViewHolder> activeGridViewHolders = new ArrayList<>();
+
+    private void recycleGridViews(FrameLayout gridOverlay) {
+        for (GridItemViewHolder holder : activeGridViewHolders) {
+            holder.tile.setOnClickListener(null);
+            holder.image.setTag(null);
+            holder.image.setImageDrawable(null);
+            holder.art.removeView(holder.liveBadge);
+            holder.liveBadge = null;
+            holder.tile.setTag(null);
+            holder.tile.setFocusable(false);
+            holder.tile.setPressed(false);
+            holder.tile.setAlpha(1f);
+            holder.tile.setScaleX(1f);
+            holder.tile.setScaleY(1f);
+            if (holder.tile.getParent() instanceof ViewGroup) {
+                ((ViewGroup) holder.tile.getParent()).removeView(holder.tile);
+            }
+            viewPool.add(holder);
+        }
+        activeGridViewHolders.clear();
+        if (gridContainer != null) gridContainer.removeAllViews();
+        gridContainer = null;
+        gridScroll = null;
+        firstContentItem = null;
+    }
 
     private GridItemViewHolder createGridItemViewHolder(int tileWidth, int tileHeight, int artHeight, Entry e) {
         LinearLayout tile = new LinearLayout(this);
@@ -622,7 +648,6 @@ public class MainActivity extends Activity {
             rowParams.setMargins(0, 0, 0, dp(16));
             gridContainer.addView(row, rowParams);
             
-            int rowEnd = Math.min(rowStart + gridColumns, endIndex);
             for (int j = rowStart; j < rowEnd; j++) {
                 Entry e = allGridItems.get(j);
                 
@@ -636,11 +661,15 @@ public class MainActivity extends Activity {
                 } else {
                     holder = createGridItemViewHolder(gridTileWidth, gridTileHeight, gridArtHeight, e);
                 }
+                activeGridViewHolders.add(holder);
+                holder.tile.setFocusable(true);
+                holder.tile.setClickable(true);
                 
                 holder.entry = e;
                 holder.tile.setTag(e);
                 holder.tile.setOnClickListener(v -> {
                     gridScroll.animate().alpha(0f).setDuration(150).withEndAction(() -> {
+                        recycleGridViews((FrameLayout) gridScroll.getParent());
                         setContentView(root);
                         if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
                             previousHomeFocus.requestFocus();
