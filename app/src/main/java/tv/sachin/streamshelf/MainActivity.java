@@ -728,17 +728,10 @@ public class MainActivity extends Activity {
                         showControls(true);
                         return true;
                     }
-                    // For live TV, Up/Down switches channels when not focused on controls
+                    // For live TV, Up/Down switches channels (prev/next) regardless of focus
                     if (currentEntry != null && "Live".equals(currentEntry.type)) {
-                        View focused = getCurrentFocus();
-                        // Only switch channels if focus is on video area (not on controls)
-                        boolean onControls = focused == progressBar || isBottomControl(focused) 
-                                || focused == backBtn || focused == ccBtn || focused == settingsBtn
-                                || focused == centerPlayPauseBtn;
-                        if (!onControls) {
-                            switchChannel(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
-                            return true;
-                        }
+                        switchChannel(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+                        return true;
                     }
                     handleVerticalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
                     return true;
@@ -1191,7 +1184,7 @@ public class MainActivity extends Activity {
         timelineContainer.addView(totalTimeText, new LinearLayout.LayoutParams(-2, -2));
 
         FrameLayout.LayoutParams timelineParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        timelineParams.setMargins(0, 0, 0, dp(120)); // Above bottom controls
+        timelineParams.setMargins(0, 0, 0, dp(96)); // Above bottom controls (reduced from 120)
         playerOverlay.addView(timelineContainer, timelineParams);
 
         // --- BOTTOM CONTROLS ---
