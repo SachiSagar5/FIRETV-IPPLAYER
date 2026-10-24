@@ -51,7 +51,7 @@ jobs:
       - name: Build Release APK with Gradle
         uses: gradle/gradle-build-action@v3
         with:
-          gradle-version: 8.5
+          gradle-version: 8.9
           arguments: assembleRelease --no-daemon
 
       - name: Verify Release APK
