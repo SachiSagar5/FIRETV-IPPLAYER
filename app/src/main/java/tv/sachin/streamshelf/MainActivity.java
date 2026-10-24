@@ -1521,7 +1521,32 @@ public class MainActivity extends Activity {
     private String classify(String g,String n){String s=(g+" "+n).toLowerCase(Locale.ROOT);if(SERIES_HINT.matcher(s).find())return "Series";if(MOVIE_HINT.matcher(s).find())return "Movies";return "Live";}
     private void sourceDialog(){LinearLayout box=new LinearLayout(this);box.setPadding(dp(20),dp(10),dp(20),0);box.setOrientation(LinearLayout.VERTICAL);EditText name=new EditText(this);name.setHint("Playlist name");box.addView(name);EditText url=new EditText(this);url.setHint("M3U URL (http:// or https://)");url.setSingleLine(true);url.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);box.addView(url);String[] opts=sources.stream().map(x->x.name).toArray(String[]::new);if(opts.length>0){Spinner sp=new Spinner(this);ArrayList<String> labels=new ArrayList<>();labels.add("Save as new playlist");labels.addAll(Arrays.asList(opts));sp.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));box.addView(sp);new AlertDialog.Builder(this).setTitle("Playlist sources").setView(box).setPositiveButton("Save",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){if(n.isEmpty())n="Playlist "+(sources.size()+1);if(sp.getSelectedItemPosition()>0){activeSource=sp.getSelectedItemPosition()-1;}else sources.add(new Source(n,u));saveSources();loadPlaylist();}}).setNeutralButton("Switch / remove",(d,w)->manageSources()).setNegativeButton("Cancel",null).show();}else new AlertDialog.Builder(this).setTitle("Add playlist source").setView(box).setPositiveButton("Add",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){sources.add(new Source(n.isEmpty()?"Playlist 1":n,u));activeSource=sources.size()-1;saveSources();loadPlaylist();}}).setNegativeButton("Cancel",null).show();}
     private void manageSources(){if(sources.isEmpty())return;String[] names=sources.stream().map(x->x.name).toArray(String[]::new);new AlertDialog.Builder(this).setTitle("Switch playlist").setItems(names,(d,w)->{activeSource=w;loadPlaylist();new AlertDialog.Builder(this).setMessage("Remove "+sources.get(w).name+"?").setPositiveButton("Remove",(a,b)->{sources.remove(w);activeSource=Math.max(0,Math.min(activeSource,sources.size()-1));saveSources();entries.clear();if(sources.isEmpty()){showWelcome();sourceLabel.setText("Choose a playlist source");}else loadPlaylist();}).setNegativeButton("Keep",null).show();}).setNegativeButton("Close",null).show();}
-    private void searchDialog(){EditText q=new EditText(this);q.setSingleLine(true);q.setHint("Search this playlist");new AlertDialog.Builder(this).setTitle("Search").setView(q).setPositiveButton("Search",(d,w)->{String needle=q.getText().toString().toLowerCase(Locale.ROOT);content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;for(Entry e:entries)if(e.name.toLowerCase(Locale.ROOT).contains(needle)){Button b=button(e.name);b.setId(View.generateViewId());b.setTag(e);b.setOnClickListener(v->play(e));content.addView(b,new LinearLayout.LayoutParams(-1,dp(56)));if(firstContentItem==null)firstContentItem=b;}if(content.getChildCount()==0){TextView empty=text("No matches",18,MUTED);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;}wireMainFocus();animateContentIn();focusFirstContent();}).setNegativeButton("Cancel",null).show();}
+    private void searchDialog() {
+        EditText query = new EditText(this);
+        query.setSingleLine(true);
+        query.setHint("Search this playlist");
+        new AlertDialog.Builder(this)
+                .setTitle("Search")
+                .setView(query)
+                .setPositiveButton("Search", (dialog, which) -> {
+                    String needle = query.getText().toString().trim().toLowerCase(Locale.ROOT);
+                    ArrayList<Entry> matches = new ArrayList<>();
+                    for (Entry entry : entries) {
+                        if (entry != null && entry.name != null
+                                && entry.name.toLowerCase(Locale.ROOT).contains(needle)) {
+                            matches.add(entry);
+                        }
+                    }
+                    if (matches.isEmpty()) {
+                        Toast.makeText(this, "No matches found", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    showAllGrid("Search Results", matches);
+                    previousHomeFocus = searchControl;
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
     private void play(Entry e) {
         try {
             previousHomeFocus = getCurrentFocus();
