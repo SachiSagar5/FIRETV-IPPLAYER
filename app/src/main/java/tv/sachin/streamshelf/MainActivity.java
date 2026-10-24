@@ -479,15 +479,15 @@ public class MainActivity extends Activity {
                     art.addView(badge, bp);
                 }
                 
-                TextView titleText = new TextView(this);
-                titleText.setText(e.name);
-                titleText.setTextColor(WHITE);
-                titleText.setTextSize(13);
-                titleText.setTypeface(null, Typeface.BOLD);
-                titleText.setMaxLines(2);
-                titleText.setEllipsize(TextUtils.TruncateAt.END);
-                titleText.setPadding(dp(10), dp(6), dp(10), dp(8));
-                tile.addView(titleText, new LinearLayout.LayoutParams(-1, -2));
+                TextView itemTitleText = new TextView(this);
+                itemTitleText.setText(e.name);
+                itemTitleText.setTextColor(WHITE);
+                itemTitleText.setTextSize(13);
+                itemTitleText.setTypeface(null, Typeface.BOLD);
+                itemTitleText.setMaxLines(2);
+                itemTitleText.setEllipsize(TextUtils.TruncateAt.END);
+                itemTitleText.setPadding(dp(10), dp(6), dp(10), dp(8));
+                tile.addView(itemTitleText, new LinearLayout.LayoutParams(-1, -2));
                 
                 LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tileWidth, tileHeight);
                 tileParams.setMargins(0, 0, dp(8), 0);
