@@ -209,16 +209,415 @@ public class MainActivity extends Activity {
         }
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading your playlist…":category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.",20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
-        boolean portrait=category.equals("Movies")||category.equals("Series");for(String group:groups.keySet()){TextView heading=text(group+"   ·   "+groups.get(group).size(),20,WHITE);heading.setTypeface(null,Typeface.BOLD);heading.setPadding(0,dp(15),0,dp(9));content.addView(heading);HorizontalScrollView hsv=createShelfScroll();LinearLayout row=(LinearLayout)hsv.getChildAt(0);content.addView(hsv);shelfRows.add(hsv);addShelfTiles(hsv,row,groups.get(group),0,portrait);}wireMainFocus();animateContentIn();
+
+        // Category icons for group headers
+        String catIcon = "";
+        int catIconColor = WHITE;
+        if (category.equals("Movies") || (shown.size() > 0 && shown.get(0).type.equals("Movies"))) { catIcon = "🎬 "; catIconColor = 0xFFE50914; }
+        else if (category.equals("Series") || (shown.size() > 0 && shown.get(0).type.equals("Series"))) { catIcon = "📺 "; catIconColor = 0xFF9C27B0; }
+        else if (category.equals("Live TV") || (shown.size() > 0 && shown.get(0).type.equals("Live"))) { catIcon = "📡 "; catIconColor = 0xFF4CAF50; }
+        else if (category.equals("My List")) { catIcon = "❤️ "; catIconColor = 0xFFE91E63; }
+
+        boolean portrait=category.equals("Movies")||category.equals("Series");
+        for(String group:groups.keySet()){
+            LinearLayout heading = new LinearLayout(this);
+            heading.setGravity(Gravity.CENTER_VERTICAL);
+            heading.setPadding(0, dp(8), 0, dp(4));
+
+            TextView iconView = text(catIcon, 20, catIconColor);
+            heading.addView(iconView);
+
+            TextView name = text(group + "  ›", 20, WHITE);
+            name.setTypeface(null, Typeface.BOLD);
+            heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+
+            TextView count = text(groups.get(group).size() + " titles", 13, 0xFF888888);
+            count.setPadding(0, 0, dp(12), 0);
+            heading.addView(count);
+
+            TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
+            seeAll.setFocusable(true);
+            seeAll.setClickable(true);
+            seeAll.setGravity(Gravity.CENTER);
+            seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+            setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+            seeAll.setOnClickListener(v -> { category = group; updateCategoryTabs(); refreshRows(); focusFirstContent(); });
+            heading.addView(seeAll);
+
+            content.addView(heading);
+
+            // Subtle divider
+            View divider = new View(this);
+            divider.setBackgroundColor(0xFF1A1A2E);
+            LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+            divParams.setMargins(0, dp(4), 0, dp(8));
+            content.addView(divider);
+
+            HorizontalScrollView hsv = createShelfScroll();
+            LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+            content.addView(hsv);
+            shelfRows.add(hsv);
+            addShelfTiles(hsv, row, groups.get(group), 0, portrait);
+        }
+        wireMainFocus();animateContentIn();}
+    private void renderHome(){
+        Entry hero = featuredEntry();
+        content.addView(buildHero(hero));
+        
+        // Add Continue Watching row if there's progress
+        addContinueWatchingRow();
+        
+        appendHomeShelf("Movies","Movies",false);
+        appendHomeShelf("Series","Series",false);
+        appendHomeShelf("Live TV","Live",true);
+        if(entries.isEmpty()){TextView empty=text("Loading your playlist…",16,MUTED);empty.setPadding(dp(4),dp(12),0,dp(10));content.addView(empty);}
     }
-    private void renderHome(){Entry hero=featuredEntry();content.addView(buildHero(hero));appendHomeShelf("Movies","Movies",false);appendHomeShelf("Series","Series",false);appendHomeShelf("Live TV","Live",true);if(entries.isEmpty()){TextView empty=text("Loading your playlist…",16,MUTED);empty.setPadding(dp(4),dp(12),0,dp(10));content.addView(empty);}}
-    private Entry featuredEntry(){for(Entry e:entries)if(e.type.equals("Movies"))return e;for(Entry e:entries)if(e.type.equals("Series"))return e;return entries.isEmpty()?null:entries.get(0);}
-    private FrameLayout buildHero(Entry e){FrameLayout hero=new FrameLayout(this);hero.setBackground(rounded(0xff10151d,12));hero.setClipToOutline(true);hero.setClipChildren(true);LinearLayout.LayoutParams heroParams=new LinearLayout.LayoutParams(-1,dp(194));heroParams.setMargins(0,0,0,dp(4));hero.setLayoutParams(heroParams);
-        if(e!=null&&!e.logo.isEmpty()){ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setTag(e);hero.addView(image,new FrameLayout.LayoutParams(-1,-1));hero.post(()->loadThumbnail(image,e.logo,hero.getWidth(),hero.getHeight()));}
-        View shade=new View(this);shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,new int[]{0xf805090f,0xeb05090f,0x9f05090f,0x2205090f}));hero.addView(shade,new FrameLayout.LayoutParams(-1,-1));LinearLayout details=new LinearLayout(this);details.setGravity(Gravity.CENTER_VERTICAL);details.setOrientation(LinearLayout.VERTICAL);details.setPadding(dp(20),dp(12),0,dp(12));FrameLayout.LayoutParams detailParams=new FrameLayout.LayoutParams(dp(405),-1,Gravity.LEFT|Gravity.CENTER_VERTICAL);hero.addView(details,detailParams);
-        TextView eyebrow=text(e==null?"WELCOME":e.type.equals("Live")?"LIVE TV":e.type.toUpperCase(Locale.ROOT),13,RED);eyebrow.setTypeface(null,Typeface.BOLD);details.addView(eyebrow);TextView title=text(e==null?"StreamShelf":e.name,32,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(0,dp(2),0,dp(3));details.addView(title);TextView summary=text(e==null?"Live TV, movies and series in one place.":e.group.isEmpty()?"Watch now on StreamShelf.":"Featured from "+e.group,15,0xffd0d2d7);summary.setMaxLines(2);summary.setEllipsize(android.text.TextUtils.TruncateAt.END);details.addView(summary);LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER_VERTICAL);actions.setPadding(0,dp(13),0,0);details.addView(actions);Button watch=button("▶   Watch Now");watch.setId(View.generateViewId());watch.setTag(e);watch.setOnClickListener(v->{if(e!=null)play(e);else sourceDialog();});actions.addView(watch,new LinearLayout.LayoutParams(dp(142),dp(47)));Button info=button("More Info");info.setId(View.generateViewId());info.setTag(e);info.setBackground(rounded(0xff262d38,7));info.setOnClickListener(v->{if(e!=null)showEntryInfo(e);else sourceDialog();});LinearLayout.LayoutParams infoParams=new LinearLayout.LayoutParams(dp(112),dp(47));infoParams.setMargins(dp(10),0,0,0);actions.addView(info,infoParams);if(firstContentItem==null)firstContentItem=watch;return hero;
+
+    private Entry featuredEntry(){
+        // Priority: 1) Recently watched with progress, 2) Movies, 3) Series, 4) First entry
+        ArrayList<JSONObject> recent = getRecentProgress(1);
+        if (!recent.isEmpty()) {
+            try {
+                String name = recent.get(0).getString("name");
+                for (Entry e : entries) {
+                    if (e.name.equals(name)) return e;
+                }
+            } catch (Exception ignored) {}
+        }
+        for(Entry e:entries)if(e.type.equals("Movies"))return e;
+        for(Entry e:entries)if(e.type.equals("Series"))return e;
+        return entries.isEmpty()?null:entries.get(0);
     }
-    private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(e.type.equals(type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);TextView name=text(title+"  ›",20,WHITE);name.setTypeface(null,Typeface.BOLD);heading.addView(name,new LinearLayout.LayoutParams(0,dp(36),1));TextView seeAll=text("See All  ›",13,0xffc7cad1);seeAll.setFocusable(true);seeAll.setClickable(true);seeAll.setGravity(Gravity.CENTER);seeAll.setPadding(dp(10),dp(5),dp(10),dp(5));setFocusStyle(seeAll,Color.TRANSPARENT,6);seeAll.setOnClickListener(v->{category=title;updateCategoryTabs();refreshRows();focusFirstContent();});heading.addView(seeAll);content.addView(heading);HorizontalScrollView hsv=createShelfScroll();LinearLayout row=(LinearLayout)hsv.getChildAt(0);content.addView(hsv);shelfRows.add(hsv);addHomeTiles(hsv,row,shelf,0,live);}
+
+    private void addContinueWatchingRow() {
+        ArrayList<JSONObject> recent = getRecentProgress(6);
+        if (recent.isEmpty()) return;
+        
+        ArrayList<Entry> continueEntries = new ArrayList<>();
+        for (JSONObject obj : recent) {
+            try {
+                String name = obj.getString("name");
+                for (Entry e : entries) {
+                    if (e.name.equals(name)) {
+                        continueEntries.add(e);
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (continueEntries.isEmpty()) return;
+        
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = text("Continue Watching  ›", 20, WHITE);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+        TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
+        seeAll.setFocusable(true);
+        seeAll.setClickable(true);
+        seeAll.setGravity(Gravity.CENTER);
+        seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+        seeAll.setOnClickListener(v -> {
+            // Could show a dedicated continue watching screen
+            Toast.makeText(this, "Continue Watching", Toast.LENGTH_SHORT).show();
+        });
+        heading.addView(seeAll);
+        content.addView(heading);
+        
+        HorizontalScrollView hsv = createShelfScroll();
+        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+        content.addView(hsv);
+        shelfRows.add(hsv);
+        addContinueTiles(hsv, row, continueEntries);
+    }
+
+    private void addContinueTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Entry> entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            Entry e = entries.get(i);
+            JSONObject progress = getPlaybackProgress(e);
+            long position = 0, duration = 0;
+            boolean completed = false;
+            if (progress != null) {
+                try {
+                    position = progress.getLong("position");
+                    duration = progress.getLong("duration");
+                    completed = progress.getBoolean("completed");
+                } catch (Exception ignored) {}
+            }
+            
+            LinearLayout tile = new LinearLayout(this);
+            tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setBackground(rounded(0xff0d141d, 8));
+            tile.setClipChildren(false);
+            tile.setFocusable(true);
+            tile.setClickable(true);
+            tile.setTag(e);
+            tile.setId(View.generateViewId());
+            setFocusStyle(tile, 0xff0d141d, 8);
+            tile.setOnClickListener(v -> play(e));
+            
+            FrameLayout art = new FrameLayout(this);
+            art.setBackground(rounded(0xff131a23, 8));
+            art.setClipToOutline(true);
+            LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(-1, dp(104));
+            artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
+            tile.addView(art, artParams);
+            
+            TextView placeholder = text("▣", 25, 0xff626b78);
+            placeholder.setGravity(Gravity.CENTER);
+            art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+            
+            ImageView image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setTag(e);
+            art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            hero.post(() -> loadThumbnail(image, e.logo, hero.getWidth(), hero.getHeight()));
+            
+            // Progress bar overlay
+            if (duration > 0) {
+                View progressBg = new View(this);
+                progressBg.setBackgroundColor(0x88000000);
+                FrameLayout.LayoutParams bgParams = new FrameLayout.LayoutParams(-1, dp(4), Gravity.BOTTOM);
+                art.addView(progressBg, bgParams);
+                
+                View progressFill = new View(this);
+                progressFill.setBackgroundColor(RED);
+                float pct = Math.min(1f, (float) position / duration);
+                FrameLayout.LayoutParams fillParams = new FrameLayout.LayoutParams((int)(dp(118) * pct), dp(4), Gravity.BOTTOM);
+                art.addView(progressFill, fillParams);
+                
+                // Progress text
+                TextView progressText = new TextView(this);
+                progressText.setText(completed ? "Completed" : String.format(Locale.ROOT, "%d%%", (int)(pct * 100)));
+                progressText.setTextColor(WHITE);
+                progressText.setTextSize(10);
+                progressText.setTypeface(null, Typeface.BOLD);
+                progressText.setPadding(dp(6), dp(2), dp(6), dp(2));
+                progressText.setBackgroundColor(0xCC000000);
+                FrameLayout.LayoutParams ptParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.RIGHT);
+                ptParams.setMargins(0, 0, dp(6), dp(6));
+                art.addView(progressText, ptParams);
+                
+                if (completed) {
+                    TextView badge = text("✓ DONE", 10, WHITE);
+                    badge.setTypeface(null, Typeface.BOLD);
+                    badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+                    badge.setBackground(rounded(0xFF4CAF50, 4));
+                    FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
+                    bp.setMargins(dp(7), dp(7), 0, 0);
+                    art.addView(badge, bp);
+                }
+            }
+            
+            TextView titleText = text(e.name, 12, WHITE);
+            titleText.setMaxLines(1);
+            titleText.setEllipsize(TextUtils.TruncateAt.END);
+            titleText.setPadding(dp(5), dp(2), dp(5), dp(3));
+            tile.addView(titleText);
+            
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(dp(118), dp(130));
+            tileParams.setMargins(0, 0, dp(8), dp(7));
+            row.addView(tile, tileParams);
+            
+            if (firstContentItem == null) firstContentItem = tile;
+        }
+        
+        if (entries.size() < 6) {
+            TextView more = text("See All  ›", 15, WHITE);
+            more.setGravity(Gravity.CENTER);
+            more.setFocusable(true);
+            more.setClickable(true);
+            setFocusStyle(more, 0xff131a23, 8);
+            more.setOnClickListener(v -> Toast.makeText(this, "Continue Watching", Toast.LENGTH_SHORT).show());
+            row.addView(more, new LinearLayout.LayoutParams(dp(95), dp(130)));
+        }
+        hsv.postDelayed(() -> loadVisibleThumbnails(hsv), 100);
+    }
+    private FrameLayout buildHero(Entry e){
+        FrameLayout hero=new FrameLayout(this);
+        hero.setBackground(rounded(0xff10151d,12));
+        hero.setClipToOutline(true);
+        hero.setClipChildren(true);
+        LinearLayout.LayoutParams heroParams=new LinearLayout.LayoutParams(-1,dp(220));
+        heroParams.setMargins(0,0,0,dp(4));
+        hero.setLayoutParams(heroParams);
+
+        JSONObject progress = (e != null) ? getPlaybackProgress(e) : null;
+        long savedPosition = 0, savedDuration = 0;
+        boolean completed = false;
+        if (progress != null) {
+            try {
+                savedPosition = progress.getLong("position");
+                savedDuration = progress.getLong("duration");
+                completed = progress.getBoolean("completed");
+            } catch (Exception ignored) {}
+        }
+
+        if(e!=null&&!e.logo.isEmpty()){
+            ImageView image=new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setTag(e);
+            hero.addView(image,new FrameLayout.LayoutParams(-1,-1));
+            hero.post(()->loadThumbnail(image,e.logo,hero.getWidth(),hero.getHeight()));
+        }
+
+        View shade=new View(this);
+        shade.setBackground(new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{0xFF05090F, 0xEE05090F, 0xAA05090F, 0x3305090F}));
+        hero.addView(shade,new FrameLayout.LayoutParams(-1,-1));
+
+        LinearLayout details=new LinearLayout(this);
+        details.setGravity(Gravity.CENTER_VERTICAL);
+        details.setOrientation(LinearLayout.VERTICAL);
+        details.setPadding(dp(24),dp(12),0,dp(12));
+        FrameLayout.LayoutParams detailParams=new LinearLayout.LayoutParams(dp(450),-1,Gravity.LEFT|Gravity.CENTER_VERTICAL);
+        hero.addView(details,detailParams);
+
+        String badgeText = "WELCOME";
+        int badgeColor = RED;
+        if (e != null) {
+            if (completed) {
+                badgeText = "✓  COMPLETED";
+                badgeColor = 0xFF4CAF50;
+            } else if (savedPosition > 0) {
+                badgeText = "▶  CONTINUE WATCHING";
+                badgeColor = 0xFFFFB300;
+            } else {
+                badgeText = e.type.equals("Live") ? "LIVE TV" : e.type.toUpperCase(Locale.ROOT);
+                badgeColor = RED;
+            }
+        }
+        TextView eyebrow=text(badgeText,13,badgeColor);
+        eyebrow.setTypeface(null,Typeface.BOLD);
+        details.addView(eyebrow);
+
+        TextView title=text(e==null?"StreamShelf":e.name,34,WHITE);
+        title.setTypeface(null,Typeface.BOLD);
+        title.setMaxLines(2);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        title.setPadding(0,dp(2),0,dp(6));
+        details.addView(title);
+
+        if (e != null && savedPosition > 0 && savedDuration > 0) {
+            LinearLayout progressContainer = new LinearLayout(this);
+            progressContainer.setOrientation(LinearLayout.VERTICAL);
+            progressContainer.setPadding(0, dp(4), 0, dp(8));
+
+            LinearLayout progressRow = new LinearLayout(this);
+            progressRow.setGravity(Gravity.CENTER_VERTICAL);
+
+            TextView progressLabel = text(completed ? "Completed" : "Resume", 13, 0xFFB0B0B0);
+            progressLabel.setPadding(0, 0, dp(12), 0);
+            progressRow.addView(progressLabel);
+
+            View progressBg = new View(this);
+            progressBg.setBackgroundColor(0xFF333333);
+            LinearLayout.LayoutParams bgParams = new LinearLayout.LayoutParams(0, dp(6), 1);
+            progressRow.addView(progressBg, bgParams);
+
+            View progressFill = new View(this);
+            progressFill.setBackgroundColor(badgeColor);
+            float pct = Math.min(1f, (float) savedPosition / savedDuration);
+            LinearLayout.LayoutParams fillParams = new LinearLayout.LayoutParams((int)(dp(200) * pct), dp(6));
+            progressRow.addView(progressFill, fillParams);
+
+            TextView progressPct = text(String.format(Locale.ROOT, "%d%%", (int)(pct * 100)), 13, WHITE);
+            progressPct.setTypeface(null, Typeface.BOLD);
+            progressPct.setPadding(dp(12), 0, 0, 0);
+            progressRow.addView(progressPct);
+
+            progressContainer.addView(progressRow);
+
+            long remaining = savedDuration - savedPosition;
+            String timeStr = completed ? "Finished" : formatTime(remaining) + " remaining";
+            TextView timeText = text(timeStr, 12, 0xFF999999);
+            progressContainer.addView(timeText);
+
+            details.addView(progressContainer);
+        } else {
+            TextView summary=text(e==null?"Live TV, movies and series in one place.":e.group.isEmpty()?"Watch now on StreamShelf.":"Featured from "+e.group,15,0xffd0d2d7);
+            summary.setMaxLines(2);
+            summary.setEllipsize(TextUtils.TruncateAt.END);
+            summary.setPadding(0,dp(4),0,dp(8));
+            details.addView(summary);
+        }
+
+        LinearLayout actions=new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0,dp(16),0,0);
+        details.addView(actions);
+
+        String btnText = (e != null && savedPosition > 0) ? (completed ? "▶  Watch Again" : "▶  Resume") : "▶   Watch Now";
+        Button watch=button(btnText);
+        watch.setId(View.generateViewId());
+        watch.setTag(e);
+        watch.setOnClickListener(v->{if(e!=null)play(e);else sourceDialog();});
+        actions.addView(watch,new LinearLayout.LayoutParams(dp(160),dp(50)));
+
+        Button info=button("More Info");
+        info.setId(View.generateViewId());
+        info.setTag(e);
+        info.setBackground(rounded(0xff262d38,7));
+        info.setOnClickListener(v->{if(e!=null)showEntryInfo(e);else sourceDialog();});
+        LinearLayout.LayoutParams infoParams=new LinearLayout.LayoutParams(dp(120),dp(50));
+        infoParams.setMargins(dp(12),0,0,0);
+        actions.addView(info,infoParams);
+
+        if(firstContentItem==null)firstContentItem=watch;
+        return hero;
+    }
+    private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(e.type.equals(type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;
+
+        // Category icon mapping
+        String icon = "";
+        int iconColor = WHITE;
+        switch(type) {
+            case "Movies": icon = "🎬"; iconColor = 0xFFE50914; break;
+            case "Series": icon = "📺"; iconColor = 0xFF9C27B0; break;
+            case "Live": icon = "📡"; iconColor = 0xFF4CAF50; break;
+            case "My List": icon = "❤️"; iconColor = 0xFFE91E63; break;
+        }
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(0, dp(8), 0, dp(4));
+
+        TextView iconView = text(icon, 24, iconColor);
+        iconView.setPadding(0, 0, dp(8), 0);
+        heading.addView(iconView);
+
+        TextView name = text(title + "  ›", 20, WHITE);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+
+        TextView count = text(shelf.size() + " titles", 13, 0xFF888888);
+        count.setPadding(0, 0, dp(12), 0);
+        heading.addView(count);
+
+        TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
+        seeAll.setFocusable(true);
+        seeAll.setClickable(true);
+        seeAll.setGravity(Gravity.CENTER);
+        seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+        seeAll.setOnClickListener(v -> { category = title; updateCategoryTabs(); refreshRows(); focusFirstContent(); });
+        heading.addView(seeAll);
+
+        content.addView(heading);
+
+        // Subtle divider
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1A1A2E);
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(4), 0, dp(8));
+        content.addView(divider);
+
+        HorizontalScrollView hsv = createShelfScroll();
+        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+        content.addView(hsv);
+        shelfRows.add(hsv);
+        addHomeTiles(hsv, row, shelf, 0, live);}
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
     private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text(live?"▶":"▣",25,0xff626b78);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setOnClickListener(v->{category=live?"Live TV":shelf.get(0).type;updateCategoryTabs();refreshRows();focusFirstContent();});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
@@ -1029,6 +1428,7 @@ public class MainActivity extends Activity {
 
     private void startTimelineUpdater() {
         timelineUpdater = new Runnable() {
+            int saveCounter = 0;
             @Override public void run() {
                 if (player != null && playing && controlsVisible) {
                     long pos = player.getCurrentPosition();
@@ -1043,6 +1443,16 @@ public class MainActivity extends Activity {
                     } else {
                         // Live stream - hide timeline or show LIVE
                         timelineContainer.setVisibility(View.GONE);
+                    }
+                }
+                // Save progress every 10 seconds (20 ticks * 500ms)
+                saveCounter++;
+                if (saveCounter >= 20 && player != null && currentEntry != null && player.getDuration() > 0) {
+                    saveCounter = 0;
+                    long pos = player.getCurrentPosition();
+                    long dur = player.getDuration();
+                    if (pos > 30000 && pos < dur - 60000) {
+                        savePlaybackProgress(currentEntry, pos, false);
                     }
                 }
                 timelineHandler.postDelayed(this, 500);
@@ -1323,13 +1733,83 @@ public class MainActivity extends Activity {
         // Auto-return to browse when stream ends (e.g., VOD movie finishes)
         runOnUiThread(() -> {
             if (playing) {
+                // Mark as completed (100% progress)
+                if (currentEntry != null) savePlaybackProgress(currentEntry, player != null ? player.getDuration() : 0, true);
                 Toast.makeText(this, "Playback finished", Toast.LENGTH_SHORT).show();
                 onBackPressed();
             }
         });
     }
+
+    private void savePlaybackProgress(Entry entry, long position, boolean completed) {
+        if (entry == null || position <= 0) return;
+        try {
+            SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+            String key = "progress_" + sha256(entry.url);
+            JSONObject obj = new JSONObject();
+            obj.put("position", position);
+            obj.put("duration", player != null ? player.getDuration() : 0);
+            obj.put("completed", completed);
+            obj.put("timestamp", System.currentTimeMillis());
+            obj.put("name", entry.name);
+            obj.put("logo", entry.logo);
+            obj.put("type", entry.type);
+            obj.put("group", entry.group);
+            prefs.edit().putString(key, obj.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private void saveCurrentPlaybackPosition() {
+        if (player != null && currentEntry != null && player.getDuration() > 0) {
+            long pos = player.getCurrentPosition();
+            long dur = player.getDuration();
+            // Only save if watched more than 30 seconds and not near the end
+            if (pos > 30000 && pos < dur - 60000) {
+                savePlaybackProgress(currentEntry, pos, false);
+            }
+        }
+    }
+
+    private JSONObject getPlaybackProgress(Entry entry) {
+        if (entry == null) return null;
+        try {
+            SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+            String key = "progress_" + sha256(entry.url);
+            String json = prefs.getString(key, null);
+            if (json != null) return new JSONObject(json);
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private ArrayList<JSONObject> getRecentProgress(int limit) {
+        ArrayList<JSONObject> recent = new ArrayList<>();
+        try {
+            SharedPreferences prefs = getPreferences(MODE_PRIVATE);
+            Map<String, ?> all = prefs.getAll();
+            ArrayList<JSONObject> items = new ArrayList<>();
+            for (Map.Entry<String, ?> e : all.entrySet()) {
+                if (e.getKey().startsWith("progress_")) {
+                    try {
+                        JSONObject obj = new JSONObject(e.getValue().toString());
+                        items.add(obj);
+                    } catch (Exception ignored) {}
+                }
+            }
+            // Sort by timestamp descending
+            items.sort((a, b) -> {
+                try {
+                    return Long.compare(b.getLong("timestamp"), a.getLong("timestamp"));
+                } catch (Exception ex) { return 0; }
+            });
+            for (int i = 0; i < Math.min(limit, items.size()); i++) {
+                recent.add(items.get(i));
+            }
+        } catch (Exception ignored) {}
+        return recent;
+    }
     @Override public void onBackPressed(){
         if (playing) {
+            saveCurrentPlaybackPosition(); // Save progress before exiting
             releaseWakeLock();
             cancelHideControls();
             if (timelineUpdater != null) timelineHandler.removeCallbacks(timelineUpdater);
