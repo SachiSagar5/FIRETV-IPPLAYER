@@ -1028,7 +1028,7 @@ public class MainActivity extends Activity {
             GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);
             if(focused){
                 bg.setStroke(dp(3), RED);
-                bg.setShadowLayer(dp(8), 0f, dp(4), 0x80E50914);
+                bg.setShadowLayer((float)dp(8), 0f, (float)dp(4), 0x80E50914);
             } else {
                 bg.setStroke(dp(2), 0xFFFFFFFF);
                 bg.setShadowLayer(0f, 0f, 0f, 0);
@@ -1760,7 +1760,7 @@ public class MainActivity extends Activity {
                 if (v.getBackground() instanceof GradientDrawable) {
                     GradientDrawable bg = (GradientDrawable) v.getBackground();
                     bg.setStroke(dp(4), RED);
-                    bg.setShadowLayer(dp(8), 0f, dp(4), 0x80E50914);
+                    bg.setShadowLayer((float)dp(8), 0f, (float)dp(4), 0x80E50914);
                 }
                 focusedControl = v;
                 focusedControlIndex = indexOfControl(v);
