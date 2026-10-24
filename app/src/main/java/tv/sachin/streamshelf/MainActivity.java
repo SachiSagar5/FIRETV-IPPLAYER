@@ -1028,10 +1028,19 @@ public class MainActivity extends Activity {
             GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);
             if(focused){
                 bg.setStroke(dp(3), RED);
-                bg.setShadowLayer((float)dp(8), 0f, (float)dp(4), 0x80E50914);
+                // Use View elevation + outline for glow effect instead of GradientDrawable shadow
+                v.setOutlineProvider(new ViewOutlineProvider() {
+                    @Override
+                    public void getOutline(View view, Outline outline) {
+                        outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(radius));
+                    }
+                });
+                v.setClipToOutline(true);
+                v.setElevation(dp(12));
             } else {
                 bg.setStroke(dp(2), 0xFFFFFFFF);
-                bg.setShadowLayer(0f, 0f, 0f, 0);
+                v.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+                v.setElevation(0);
             }
             v.setBackground(bg);
             v.animate().cancel();
@@ -1756,12 +1765,20 @@ public class MainActivity extends Activity {
                     .setDuration(200)
                     .setInterpolator(new android.view.animation.OvershootInterpolator(1.2f))
                     .start();
-                // Red glow outline with shadow
+                // Red glow outline with elevation
                 if (v.getBackground() instanceof GradientDrawable) {
                     GradientDrawable bg = (GradientDrawable) v.getBackground();
                     bg.setStroke(dp(4), RED);
-                    bg.setShadowLayer((float)dp(8), 0f, (float)dp(4), 0x80E50914);
                 }
+                // Use View elevation + outline for glow effect
+                v.setOutlineProvider(new ViewOutlineProvider() {
+                    @Override
+                    public void getOutline(View view, Outline outline) {
+                        outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(size / 2));
+                    }
+                });
+                v.setClipToOutline(true);
+                v.setElevation(dp(16));
                 focusedControl = v;
                 focusedControlIndex = indexOfControl(v);
                 // Bring to front for proper layering
@@ -1778,8 +1795,9 @@ public class MainActivity extends Activity {
                 if (v.getBackground() instanceof GradientDrawable) {
                     GradientDrawable bg = (GradientDrawable) v.getBackground();
                     bg.setStroke(dp(2), 0xFFFFFFFF);
-                    bg.setShadowLayer(0f, 0f, 0f, 0);
                 }
+                v.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+                v.setElevation(0);
             }
         });
         // Enable hardware acceleration for smooth animations
