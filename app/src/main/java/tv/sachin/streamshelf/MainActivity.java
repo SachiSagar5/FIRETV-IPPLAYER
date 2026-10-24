@@ -10,6 +10,7 @@ import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.*;
 import android.graphics.drawable.shapes.RectShape;
+import android.graphics.drawable.shapes.RoundRectShape;
 import android.os.*;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -691,7 +692,7 @@ public class MainActivity extends Activity {
         currentTimeText.setText("0:00");
         currentTimeText.setTextColor(WHITE);
         currentTimeText.setTextSize(13);
-        currentTimeText.setTypeface(null, Typeface.MONOSPACE);
+        currentTimeText.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL));
         currentTimeText.setMinWidth(dp(60));
         currentTimeText.setGravity(Gravity.CENTER);
         timelineContainer.addView(currentTimeText, new LinearLayout.LayoutParams(-2, -2));
@@ -733,7 +734,7 @@ public class MainActivity extends Activity {
         totalTimeText.setText("0:00");
         totalTimeText.setTextColor(WHITE);
         totalTimeText.setTextSize(13);
-        totalTimeText.setTypeface(null, Typeface.MONOSPACE);
+        totalTimeText.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL));
         totalTimeText.setMinWidth(dp(60));
         totalTimeText.setGravity(Gravity.CENTER);
         timelineContainer.addView(totalTimeText, new LinearLayout.LayoutParams(-2, -2));
