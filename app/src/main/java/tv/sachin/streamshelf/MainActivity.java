@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
     private final ArrayList<Source> sources=new ArrayList<>();
     private final ArrayList<Entry> entries=new ArrayList<>();
     private final HashSet<String> favoriteKeys=new HashSet<>();
-    private LinearLayout root, content, nav, sidebar; private ScrollView mainScroll; private TextView status, sourceLabel; private TextView searchControl; private String category="Home"; private int activeSource=0;
+    private LinearLayout root, content, nav, sidebar, sidebarBrand; private ScrollView mainScroll; private TextView status, sourceLabel, brandWordmark, brandProduct; private TextView searchControl; private String category="Home"; private int activeSource=0; private boolean sidebarExpanded;
     private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
     private final ThreadPoolExecutor thumbnailWorkers = new ThreadPoolExecutor(
@@ -194,10 +194,12 @@ public class MainActivity extends Activity {
         
         categoryTabs.clear();
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
-        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);root.addView(sidebar,new LinearLayout.LayoutParams(dp(180),-1));
-        LinearLayout brand=new LinearLayout(this);brand.setGravity(Gravity.CENTER_VERTICAL);brand.setPadding(dp(4),dp(4),0,dp(27));sidebar.addView(brand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",27,RED);brand.addView(mark);TextView wordmark=text("  IPTV ",21,WHITE);wordmark.setTypeface(null,Typeface.BOLD);brand.addView(wordmark);TextView product=text("Player",21,RED);product.setTypeface(null,Typeface.BOLD);brand.addView(product);
-        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];TextView v=text(item[1]+"   "+tab,16,WHITE);v.setTag(tab);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER_VERTICAL);v.setId(View.generateViewId());v.setPadding(dp(14),0,dp(7),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
+        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
+        sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,dp(27));sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",27,RED);sidebarBrand.addView(mark);brandWordmark=text("  IPTV ",21,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",21,RED);brandProduct.setTypeface(null,Typeface.BOLD);sidebarBrand.addView(brandProduct);
+        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->setSidebarExpanded(isInsideView(newFocus,nav)));
+        setSidebarExpanded(false);
         LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);root.addView(main,new LinearLayout.LayoutParams(0,-1,1));LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);top.setPadding(dp(16),dp(3),dp(25),0);main.addView(top,new LinearLayout.LayoutParams(-1,dp(54)));searchControl=text("⌕",29,WHITE);searchControl.setGravity(Gravity.CENTER);searchControl.setFocusable(true);searchControl.setClickable(true);searchControl.setContentDescription("Search playlist");searchControl.setId(View.generateViewId());searchControl.setPadding(dp(12),0,dp(12),0);setFocusStyle(searchControl,Color.TRANSPARENT,7);searchControl.setOnClickListener(v->searchDialog());top.addView(searchControl,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView settings=text("⚙",22,WHITE);settings.setGravity(Gravity.CENTER);settings.setFocusable(true);settings.setClickable(true);settings.setContentDescription("Settings and playlist sources");settings.setPadding(dp(8),0,dp(8),0);setFocusStyle(settings,Color.TRANSPARENT,7);settings.setOnClickListener(v->sourceDialog());top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView clock=text(new java.text.SimpleDateFormat("hh:mm a",Locale.getDefault()).format(new Date()),14,WHITE);clock.setGravity(Gravity.CENTER);top.addView(clock,new LinearLayout.LayoutParams(dp(94),dp(44)));
         mainScroll=new ScrollView(this);mainScroll.setFillViewport(true);mainScroll.setVerticalScrollBarEnabled(false);mainScroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->{for(HorizontalScrollView shelf:shelfRows)loadVisibleThumbnails(shelf);});main.addView(mainScroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(14),dp(1),dp(22),dp(16));content.setOrientation(LinearLayout.VERTICAL);content.setClipChildren(false);mainScroll.addView(content);
         status=text("",12,MUTED);status.setPadding(dp(15),0,0,0);LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL|Gravity.RIGHT);footer.setPadding(dp(12),0,dp(24),dp(7));TextView hints=text("✥  Navigate     ⓞ  Select     ↶  Back     MENU  My List",12,0xffc5c8d0);hints.setGravity(Gravity.CENTER);hints.setPadding(dp(16),dp(7),dp(16),dp(7));hints.setBackground(rounded(0xff10151d,24));footer.addView(status,new LinearLayout.LayoutParams(0,dp(32),1));footer.addView(hints);main.addView(footer,new LinearLayout.LayoutParams(-1,dp(43)));
@@ -1102,6 +1104,25 @@ public class MainActivity extends Activity {
     private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;for(File f:files)size+=f.length();int count=files.length;for(File f:files){if(count<=140&&size<=36L*1024*1024)break;long bytes=f.length();if(f.delete()){size-=bytes;count--;}}}
     private void animateContentIn(){content.animate().alpha(1f).setDuration(180).start();}
     private void updateCategoryTabs(){for(TextView tab:categoryTabs){boolean selected=category.equals(String.valueOf(tab.getTag()));tab.setTextColor(selected?WHITE:0xffd0d2d7);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(rounded(selected?0xffa90d19:Color.TRANSPARENT,7));}}
+    private boolean isInsideView(View child, ViewGroup parent){for(View view=child;view!=null;){if(view==parent)return true;android.view.ViewParent next=view.getParent();view=next instanceof View?(View)next:null;}return false;}
+    private void setSidebarExpanded(boolean expanded){
+        if(sidebar==null)return;
+        sidebarExpanded=expanded;
+        ViewGroup.LayoutParams params=sidebar.getLayoutParams();
+        params.width=dp(expanded?180:64);
+        sidebar.setLayoutParams(params);
+        sidebarBrand.setGravity(expanded?Gravity.CENTER_VERTICAL:Gravity.CENTER);
+        brandWordmark.setVisibility(expanded?View.VISIBLE:View.GONE);
+        brandProduct.setVisibility(expanded?View.VISIBLE:View.GONE);
+        sourceLabel.setVisibility(expanded?View.VISIBLE:View.GONE);
+        for(TextView tab:categoryTabs){
+            String name=String.valueOf(tab.getTag());
+            String icon="Home".equals(name)?"⌂":"Movies".equals(name)||"Live TV".equals(name)?"▣":"Series".equals(name)?"▤":"My List".equals(name)?"♡":"⚙";
+            tab.setText(expanded?icon+"   "+name:icon);
+            tab.setGravity(expanded?Gravity.CENTER_VERTICAL:Gravity.CENTER);
+            tab.setPadding(dp(expanded?14:5),0,dp(expanded?7:5),0);
+        }
+    }
     private void setFocusStyle(View view,int normalColor,int radius){
         // Check if this is a menu/sidebar item (transparent background) - don't show white border
         final boolean isMenuItem = (normalColor == Color.TRANSPARENT);
@@ -1527,44 +1548,38 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(44), dp(44));
         topBar.addView(backBtn, backParams);
 
-        // Title
-        titleText = new TextView(this);
-        titleText.setText(currentEntry != null ? currentEntry.name : "Stream");
-        titleText.setTextColor(WHITE);
-        titleText.setTextSize(18);
-        titleText.setTypeface(null, Typeface.BOLD);
-        titleText.setMaxLines(1);
-        titleText.setEllipsize(TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, dp(44), 1);
-        titleParams.setMargins(dp(16), 0, dp(16), 0);
-        topBar.addView(titleText, titleParams);
-
-        // Metadata container
+        // Title, format badges, and metadata sit together on the left.
         LinearLayout metaContainer = new LinearLayout(this);
         metaContainer.setOrientation(LinearLayout.VERTICAL);
         metaContainer.setGravity(Gravity.CENTER_VERTICAL);
 
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        titleText = new TextView(this);
+        titleText.setText(currentEntry != null ? currentEntry.name : "Stream");
+        titleText.setTextColor(WHITE);
+        titleText.setTextSize(20);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setMaxLines(1);
+        titleText.setEllipsize(TextUtils.TruncateAt.END);
+        titleRow.addView(titleText, new LinearLayout.LayoutParams(-2, -2));
+        qualityBadge = createBadge("HD");
+        audioBadge = createBadge("5.1");
+        titleRow.addView(qualityBadge);
+        titleRow.addView(audioBadge);
+        metaContainer.addView(titleRow);
+
         metadataText = new TextView(this);
         metadataText.setText(buildMetadataString());
         metadataText.setTextColor(0xFFB0B0B0);
-        metadataText.setTextSize(11);
+        metadataText.setTextSize(13);
         metadataText.setMaxLines(1);
         metadataText.setEllipsize(TextUtils.TruncateAt.END);
         metaContainer.addView(metadataText);
 
-        // Badges row
-        topBadges = new LinearLayout(this);
-        topBadges.setOrientation(LinearLayout.HORIZONTAL);
-        topBadges.setGravity(Gravity.CENTER_VERTICAL);
-
-        qualityBadge = createBadge(inferQualityLabel(currentEntry != null ? currentEntry.url : ""));
-        audioBadge = createBadge("5.1");
-        topBadges.addView(qualityBadge);
-        topBadges.addView(audioBadge);
-        metaContainer.addView(topBadges);
-
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-2, -2);
-        metaParams.setMargins(0, 0, dp(24), 0);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(0, -2, 1);
+        metaParams.setMargins(dp(16), 0, dp(16), 0);
         topBar.addView(metaContainer, metaParams);
 
         // Right side: CC, Settings, Clock
@@ -1572,8 +1587,8 @@ public class MainActivity extends Activity {
         rightContainer.setOrientation(LinearLayout.HORIZONTAL);
         rightContainer.setGravity(Gravity.CENTER_VERTICAL);
 
-        ccBtn = createIconButton(android.R.drawable.ic_menu_report_image, "Subtitles");
-        settingsBtn = createIconButton(android.R.drawable.ic_menu_preferences, "Settings");
+        ccBtn = createIconButton(R.drawable.ic_subtitles, "Subtitles");
+        settingsBtn = createIconButton(R.drawable.ic_settings, "Settings");
         clockText = new TextView(this);
         clockText.setText(new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date()));
         clockText.setTextColor(WHITE);
@@ -1685,12 +1700,18 @@ public class MainActivity extends Activity {
         bottomControls.setBackground(bottomGradient);
 
         // Create control buttons with labels
-        rewindBtn = createControlButton("⏪", "Rewind 10s");
-        playPauseBtn = createControlButton("⏸", "Pause");
-        forwardBtn = createControlButton("⏩", "Forward 10s");
-        subtitlesBtn = createControlButton("CC", "Subtitles: Off");
-        qualityBtn = createControlButton("HD", "Quality: Auto");
-        fullscreenBtn = createControlButton("⛶", "Fullscreen");
+        rewindBtn = createControlButton(R.drawable.ic_rewind, "10s\nRewind", "Rewind 10 seconds");
+        playPauseBtn = createControlButton(R.drawable.ic_pause, "Pause", "Pause");
+        forwardBtn = createControlButton(R.drawable.ic_forward, "10s\nForward", "Forward 10 seconds");
+        subtitlesBtn = createControlButton(R.drawable.ic_subtitles, "Subtitles\nOff", "Subtitles: Off");
+        qualityBtn = createControlButton(R.drawable.ic_quality, "Quality\nAuto", "Quality: Auto");
+        fullscreenBtn = createControlButton(R.drawable.ic_fullscreen, "Fullscreen", "Fullscreen");
+
+        TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn};
+        for (TextView control : controls) {
+            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(64), 1);
+            bottomControls.addView(control, controlParams);
+        }
 
         // Set click listeners
         rewindBtn.setOnClickListener(v -> seekRelative(-10000));
@@ -1809,22 +1830,20 @@ public class MainActivity extends Activity {
         return btn;
     }
 
-    private TextView createControlButton(String iconText, String desc) {
+    private TextView createControlButton(int iconResId, String label, String desc) {
         TextView btn = new TextView(this);
-        btn.setText(iconText);
+        btn.setText(label);
         btn.setTextColor(0xFFE0E0E0);
-        btn.setTextSize(22);
-        btn.setTypeface(null, Typeface.BOLD);
-        btn.setGravity(Gravity.CENTER);
-        btn.setPadding(dp(16), dp(12), dp(16), dp(12));
+        btn.setTextSize(13);
+        btn.setGravity(Gravity.CENTER_VERTICAL);
+        btn.setCompoundDrawablesWithIntrinsicBounds(iconResId, 0, 0, 0);
+        btn.setCompoundDrawablePadding(dp(14));
+        btn.setPadding(dp(10), dp(8), dp(6), dp(8));
         btn.setFocusable(true);
         btn.setClickable(true);
         btn.setContentDescription(desc);
         btn.setTag(desc);
         setFocusStyleView(btn, dp(48));
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
-        p.setMargins(0, 0, dp(8), 0);
-        btn.setLayoutParams(p);
         return btn;
     }
 
@@ -1999,11 +2018,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String formatRuntime(long ms) {
+        long totalMinutes = ms / 60000;
+        long hours = totalMinutes / 60;
+        long minutes = totalMinutes % 60;
+        return hours > 0 ? hours + "h " + minutes + "m" : minutes + "m";
+    }
+
     private void showControls(boolean show) {
         controlsVisible = show;
         if (show) {
             topBar.animate().alpha(1f).setDuration(300).start();
-            centerControls.setVisibility(isPlaying ? View.GONE : View.VISIBLE); // Show center only when paused
+            centerControls.setVisibility(View.VISIBLE);
+            centerControls.setAlpha(1f);
             timelineContainer.animate().alpha(1f).setDuration(300).start();
             bottomControls.setVisibility(View.VISIBLE);
             bottomControls.animate().alpha(1f).setDuration(300).start();
@@ -2035,18 +2062,19 @@ public class MainActivity extends Activity {
 
     private void updatePlayPauseUI() {
         if (playPauseBtn != null) {
-            playPauseBtn.setText(isPlaying ? "⏸" : "▶");
+            playPauseBtn.setText(isPlaying ? "Pause" : "Play");
+            playPauseBtn.setCompoundDrawablesWithIntrinsicBounds(isPlaying ? R.drawable.ic_pause : R.drawable.ic_play, 0, 0, 0);
             playPauseBtn.setContentDescription(isPlaying ? "Pause" : "Play");
         }
         if (centerPlayPauseBtn != null) {
             centerPlayPauseBtn.setImageDrawable(createPlayPauseDrawable(isPlaying));
             centerPlayPauseBtn.setContentDescription(isPlaying ? "Pause" : "Play");
         }
-        if (isPlaying) {
-            centerControls.setVisibility(View.GONE);
-        } else {
+        if (controlsVisible) {
             centerControls.setVisibility(View.VISIBLE);
             centerControls.setAlpha(1f);
+        } else {
+            centerControls.setVisibility(View.GONE);
         }
     }
 
@@ -2172,6 +2200,10 @@ public class MainActivity extends Activity {
                             } else if (state == Player.STATE_READY) {
                                 playerLoadingPanel.setVisibility(View.GONE);
                                 playerErrorPanel.setVisibility(View.GONE);
+                                long durationMs = player.getDuration();
+                                if (metadataText != null && durationMs > 0 && durationMs != Long.MAX_VALUE) {
+                                    metadataText.setText(buildMetadataString() + " · " + formatRuntime(durationMs));
+                                }
                                 isPlaying = player.isPlaying();
                                 updatePlayPauseUI();
                                 showControls(true);
