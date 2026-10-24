@@ -210,13 +210,13 @@ public class MainActivity extends Activity {
         if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading your playlist…":category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.",20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;}
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
 
-        // Category icons for group headers
-        String catIcon = "";
+        // Category icons for group headers - use vector drawables
+        int catIconRes = 0;
         int catIconColor = WHITE;
-        if (category.equals("Movies") || (shown.size() > 0 && shown.get(0).type.equals("Movies"))) { catIcon = "🎬 "; catIconColor = 0xFFE50914; }
-        else if (category.equals("Series") || (shown.size() > 0 && shown.get(0).type.equals("Series"))) { catIcon = "📺 "; catIconColor = 0xFF9C27B0; }
-        else if (category.equals("Live TV") || (shown.size() > 0 && shown.get(0).type.equals("Live"))) { catIcon = "📡 "; catIconColor = 0xFF4CAF50; }
-        else if (category.equals("My List")) { catIcon = "❤️ "; catIconColor = 0xFFE91E63; }
+        if (category.equals("Movies") || (shown.size() > 0 && shown.get(0).type.equals("Movies"))) { catIconRes = R.drawable.ic_movies; catIconColor = 0xFFE50914; }
+        else if (category.equals("Series") || (shown.size() > 0 && shown.get(0).type.equals("Series"))) { catIconRes = R.drawable.ic_series; catIconColor = 0xFF9C27B0; }
+        else if (category.equals("Live TV") || (shown.size() > 0 && shown.get(0).type.equals("Live"))) { catIconRes = R.drawable.ic_live_tv; catIconColor = 0xFF4CAF50; }
+        else if (category.equals("My List")) { catIconRes = R.drawable.ic_my_list; catIconColor = 0xFFE91E63; }
 
         boolean portrait=category.equals("Movies")||category.equals("Series");
         for(String group:groups.keySet()){
@@ -224,7 +224,12 @@ public class MainActivity extends Activity {
             heading.setGravity(Gravity.CENTER_VERTICAL);
             heading.setPadding(0, dp(8), 0, dp(4));
 
-            TextView iconView = text(catIcon, 20, catIconColor);
+            ImageView iconView = new ImageView(this);
+            if (catIconRes != 0) {
+                iconView.setImageResource(catIconRes);
+                iconView.setColorFilter(catIconColor);
+            }
+            iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
             heading.addView(iconView);
 
             TextView name = text(group + "  ›", 20, WHITE);
@@ -779,22 +784,27 @@ public class MainActivity extends Activity {
     }
     private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(e.type.equals(type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;
 
-        // Category icon mapping
-        String icon = "";
+        // Category icon mapping - use vector drawables
+        int iconRes = 0;
         int iconColor = WHITE;
         switch(type) {
-            case "Movies": icon = "🎬"; iconColor = 0xFFE50914; break;
-            case "Series": icon = "📺"; iconColor = 0xFF9C27B0; break;
-            case "Live": icon = "📡"; iconColor = 0xFF4CAF50; break;
-            case "My List": icon = "❤️"; iconColor = 0xFFE91E63; break;
+            case "Movies": iconRes = R.drawable.ic_movies; iconColor = 0xFFE50914; break;
+            case "Series": iconRes = R.drawable.ic_series; iconColor = 0xFF9C27B0; break;
+            case "Live": iconRes = R.drawable.ic_live_tv; iconColor = 0xFF4CAF50; break;
+            case "My List": iconRes = R.drawable.ic_my_list; iconColor = 0xFFE91E63; break;
         }
 
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         heading.setPadding(0, dp(8), 0, dp(4));
 
-        TextView iconView = text(icon, 24, iconColor);
+        ImageView iconView = new ImageView(this);
+        if (iconRes != 0) {
+            iconView.setImageResource(iconRes);
+            iconView.setColorFilter(iconColor);
+        }
         iconView.setPadding(0, 0, dp(8), 0);
+        iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
         heading.addView(iconView);
 
         TextView name = text(title + "  ›", 20, WHITE);
