@@ -370,6 +370,41 @@ public class MainActivity extends Activity {
     private final ArrayList<GridItemViewHolder> viewPool = new ArrayList<>();
     private final ArrayList<GridItemViewHolder> activeGridViewHolders = new ArrayList<>();
 
+    private boolean hasArtwork(String logo) {
+        return logo != null && !logo.trim().isEmpty();
+    }
+
+    private void styleArtworkPlaceholder(TextView placeholder, Entry entry) {
+        String type = entry == null || entry.type == null ? "Movies" : entry.type;
+        boolean isLive = "Live".equalsIgnoreCase(type) || "Live TV".equalsIgnoreCase(type);
+        boolean isSeries = "Series".equalsIgnoreCase(type);
+        String label = isLive ? "LIVE TV" : isSeries ? "SERIES" : "MOVIE";
+        String symbol = isLive ? "◉" : isSeries ? "▤" : "▶";
+        int[][] palettes = isLive
+                ? new int[][]{{0xFF092B2A, 0xFF16735D}, {0xFF102B33, 0xFF286D80}, {0xFF172D22, 0xFF467A37}}
+                : isSeries
+                    ? new int[][]{{0xFF12152D, 0xFF374A91}, {0xFF21152F, 0xFF70428A}, {0xFF102538, 0xFF287E9A}}
+                    : new int[][]{{0xFF200F18, 0xFF7A1F32}, {0xFF24170E, 0xFF9A5124}, {0xFF1A1428, 0xFF55418D}};
+        int paletteIndex = entry == null || entry.name == null ? 0
+                : Math.floorMod(entry.name.hashCode(), palettes.length);
+        GradientDrawable backdrop = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR, palettes[paletteIndex]);
+        backdrop.setCornerRadius(dp(7));
+        placeholder.setBackground(backdrop);
+        placeholder.setTextColor(0xFFF5F5F5);
+        placeholder.setTextSize(15);
+        placeholder.setGravity(Gravity.CENTER);
+        placeholder.setTypeface(null, Typeface.BOLD);
+        placeholder.setLetterSpacing(0.08f);
+        String text = symbol + "\n" + label;
+        android.text.SpannableString styledText = new android.text.SpannableString(text);
+        styledText.setSpan(new android.text.style.RelativeSizeSpan(2.5f), 0, symbol.length(),
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        styledText.setSpan(new android.text.style.RelativeSizeSpan(0.72f), symbol.length() + 1,
+                text.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        placeholder.setText(styledText);
+    }
+
     private void recycleGridViews(FrameLayout gridOverlay) {
         for (GridItemViewHolder holder : activeGridViewHolders) {
             holder.tile.setOnClickListener(null);
@@ -413,9 +448,7 @@ public class MainActivity extends Activity {
         tile.addView(art, artParams);
         
         TextView placeholder = new TextView(this);
-        placeholder.setTextColor(0xFF626B78);
-        placeholder.setTextSize(28);
-        placeholder.setGravity(Gravity.CENTER);
+        styleArtworkPlaceholder(placeholder, e);
         art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         
         ImageView image = new ImageView(this);
@@ -685,7 +718,7 @@ public class MainActivity extends Activity {
                 // Update content
                 holder.entry = e;
                 holder.titleText.setText(e.name);
-                holder.placeholder.setText(e.type.equals("Live") ? "▶" : "▣");
+                styleArtworkPlaceholder(holder.placeholder, e);
                 
                 // Load thumbnail
                 holder.art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight()));
@@ -764,8 +797,8 @@ public class MainActivity extends Activity {
             artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
             tile.addView(art, artParams);
             
-            TextView placeholder = text("▣", 25, 0xff626b78);
-            placeholder.setGravity(Gravity.CENTER);
+            TextView placeholder = text("", 25, WHITE);
+            styleArtworkPlaceholder(placeholder, e);
             art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
             
             ImageView image = new ImageView(this);
@@ -854,7 +887,12 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
 
-        if(e!=null&&!e.logo.isEmpty()){
+        if (e != null) {
+            TextView placeholder = text("", 44, WHITE);
+            styleArtworkPlaceholder(placeholder, e);
+            hero.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+        }
+        if (e != null && hasArtwork(e.logo)) {
             ImageView image=new ImageView(this);
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setTag(e);
@@ -1028,7 +1066,7 @@ public class MainActivity extends Activity {
         shelfRows.add(hsv);
         addHomeTiles(hsv, row, shelf, 0, live);}
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
-    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text(live?"▶":"▣",25,0xff626b78);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
+    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
@@ -1037,7 +1075,7 @@ public class MainActivity extends Activity {
             Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
             if(firstContentItem==null)firstContentItem=tile;
             FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
-            TextView placeholder=text(e.type.equals("Live")?"▶":"▣",32,0xff747781);placeholder.setGravity(Gravity.CENTER);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
+            TextView placeholder=text("",32,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
             ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
@@ -1629,7 +1667,7 @@ public class MainActivity extends Activity {
         timelineContainer = new LinearLayout(this);
         timelineContainer.setOrientation(LinearLayout.HORIZONTAL);
         timelineContainer.setGravity(Gravity.CENTER_VERTICAL);
-        timelineContainer.setPadding(dp(48), 0, dp(48), dp(24));
+        timelineContainer.setPadding(dp(48), 0, dp(48), 0);
         // Bottom gradient overlay
         GradientDrawable bottomGradient = new GradientDrawable(
             GradientDrawable.Orientation.BOTTOM_TOP,
@@ -1650,7 +1688,10 @@ public class MainActivity extends Activity {
         progressBar.setMax(10000); // High precision for seeking
         progressBar.setProgress(0);
         progressBar.setThumb(createSeekThumb());
+        progressBar.setThumbOffset(dp(8));
         progressBar.setSplitTrack(false);
+        progressBar.setPadding(0, 0, 0, 0);
+        progressBar.setBackgroundColor(Color.TRANSPARENT);
         // Custom progress drawable with red progress
         progressBar.setProgressDrawable(createProgressDrawable());
         progressBar.setFocusable(true);
@@ -1675,7 +1716,7 @@ public class MainActivity extends Activity {
                 scheduleHideControls();
             }
         });
-        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(0, dp(36), 1);
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(0, dp(32), 1);
         progressParams.setMargins(dp(16), 0, dp(16), 0);
         timelineContainer.addView(progressBar, progressParams);
 
@@ -1688,7 +1729,7 @@ public class MainActivity extends Activity {
         totalTimeText.setGravity(Gravity.CENTER);
         timelineContainer.addView(totalTimeText, new LinearLayout.LayoutParams(-2, -2));
 
-        FrameLayout.LayoutParams timelineParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        FrameLayout.LayoutParams timelineParams = new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM);
         timelineParams.setMargins(0, 0, 0, dp(96)); // Above bottom controls (reduced from 120)
         playerOverlay.addView(timelineContainer, timelineParams);
 
@@ -1929,7 +1970,7 @@ public class MainActivity extends Activity {
         thumb.setShape(GradientDrawable.OVAL);
         thumb.setColor(WHITE);
         thumb.setStroke(dp(2), RED);
-        thumb.setSize(dp(20), dp(20));
+        thumb.setSize(dp(16), dp(16));
         return thumb;
     }
 
@@ -1938,12 +1979,12 @@ public class MainActivity extends Activity {
         // Background track
         ShapeDrawable background = new ShapeDrawable(new RoundRectShape(new float[]{dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2)}, null, null));
         background.getPaint().setColor(0xFF333333);
-        background.setIntrinsicHeight(dp(4));
+        background.setIntrinsicHeight(dp(3));
 
         // Progress track
         ShapeDrawable progress = new ShapeDrawable(new RoundRectShape(new float[]{dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2)}, null, null));
         progress.getPaint().setColor(RED);
-        progress.setIntrinsicHeight(dp(4));
+        progress.setIntrinsicHeight(dp(3));
 
         // Wrap progress in ClipDrawable for horizontal clipping
         ClipDrawable clipProgress = new ClipDrawable(progress, Gravity.LEFT, ClipDrawable.HORIZONTAL);
@@ -1954,6 +1995,10 @@ public class MainActivity extends Activity {
         });
         layerDrawable.setId(0, android.R.id.background);
         layerDrawable.setId(1, android.R.id.progress);
+        layerDrawable.setLayerHeight(0, dp(3));
+        layerDrawable.setLayerHeight(1, dp(3));
+        layerDrawable.setLayerGravity(0, Gravity.FILL_HORIZONTAL | Gravity.CENTER_VERTICAL);
+        layerDrawable.setLayerGravity(1, Gravity.FILL_HORIZONTAL | Gravity.CENTER_VERTICAL);
         return layerDrawable;
     }
 
