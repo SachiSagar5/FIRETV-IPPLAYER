@@ -391,6 +391,7 @@ public class MainActivity extends Activity {
                 GradientDrawable.Orientation.TL_BR, palettes[paletteIndex]);
         backdrop.setCornerRadius(dp(7));
         placeholder.setBackground(backdrop);
+        placeholder.setVisibility(View.VISIBLE);
         placeholder.setTextColor(0xFFF5F5F5);
         placeholder.setTextSize(15);
         placeholder.setGravity(Gravity.CENTER);
@@ -454,6 +455,7 @@ public class MainActivity extends Activity {
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
         art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        placeholder.bringToFront();
         
         TextView titleText = new TextView(this);
         titleText.setTextColor(WHITE);
@@ -690,7 +692,6 @@ public class MainActivity extends Activity {
                 GridItemViewHolder holder;
                 if (!viewPool.isEmpty()) {
                     holder = viewPool.remove(viewPool.size() - 1);
-                    holder.tile.removeAllViews();
                     holder.tile.setTag(allGridItems.get(j));
                     holder.entry = allGridItems.get(j);
                 } else {
@@ -721,7 +722,7 @@ public class MainActivity extends Activity {
                 styleArtworkPlaceholder(holder.placeholder, e);
                 
                 // Load thumbnail
-                holder.art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight()));
+                holder.art.post(() -> loadThumbnail(holder.image, e.logo, holder.art.getWidth(), holder.art.getHeight(), holder.placeholder));
                 
                 // Live badge
                 if (holder.liveBadge != null) {
@@ -805,7 +806,8 @@ public class MainActivity extends Activity {
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setTag(e);
             art.addView(image, new FrameLayout.LayoutParams(-1, -1));
-            art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight()));
+            placeholder.bringToFront();
+            art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight(), placeholder));
             
             // Progress bar overlay
             if (duration > 0) {
@@ -897,7 +899,9 @@ public class MainActivity extends Activity {
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
             image.setTag(e);
             hero.addView(image,new FrameLayout.LayoutParams(-1,-1));
-            hero.post(()->loadThumbnail(image,e.logo,hero.getWidth(),hero.getHeight()));
+            View fallback=(e != null && hero.getChildCount()>0) ? hero.getChildAt(0) : null;
+            if(fallback instanceof TextView)fallback.bringToFront();
+            hero.post(()->loadThumbnail(image,e.logo,hero.getWidth(),hero.getHeight(),fallback instanceof TextView?(TextView)fallback:null));
         }
 
         View shade=new View(this);
@@ -1066,7 +1070,7 @@ public class MainActivity extends Activity {
         shelfRows.add(hsv);
         addHomeTiles(hsv, row, shelf, 0, live);}
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
-    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
+    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
@@ -1077,6 +1081,7 @@ public class MainActivity extends Activity {
             FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
             TextView placeholder=text("",32,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
             ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
+            placeholder.bringToFront();
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
@@ -1088,20 +1093,57 @@ public class MainActivity extends Activity {
         }
         hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);
     }
-    private void loadVisibleThumbnails(HorizontalScrollView shelf){if(shelf.getVisibility()!=View.VISIBLE||shelf.getChildCount()==0||!(shelf.getChildAt(0) instanceof ViewGroup))return;ViewGroup row=(ViewGroup)shelf.getChildAt(0);for(int i=0;i<row.getChildCount();i++){View child=row.getChildAt(i);if(!(child instanceof LinearLayout))continue;LinearLayout tile=(LinearLayout)child;if(tile.getChildCount()==0||!(tile.getChildAt(0) instanceof FrameLayout))continue;FrameLayout art=(FrameLayout)tile.getChildAt(0);Rect visible=new Rect();if(!art.getGlobalVisibleRect(visible))continue;for(int j=0;j<art.getChildCount();j++){View item=art.getChildAt(j);if(item instanceof ImageView){ImageView image=(ImageView)item;Object tag=image.getTag();if(tag instanceof Entry&&image.getWidth()>0&&image.getHeight()>0){Entry e=(Entry)tag;loadThumbnail(image,e.logo,image.getWidth(),image.getHeight());}break;}}}}
+    private void loadVisibleThumbnails(HorizontalScrollView shelf) {
+        if (shelf.getVisibility() != View.VISIBLE || shelf.getChildCount() == 0
+                || !(shelf.getChildAt(0) instanceof ViewGroup)) return;
+        ViewGroup row = (ViewGroup) shelf.getChildAt(0);
+        for (int i = 0; i < row.getChildCount(); i++) {
+            View child = row.getChildAt(i);
+            if (!(child instanceof LinearLayout)) continue;
+            LinearLayout tile = (LinearLayout) child;
+            if (tile.getChildCount() == 0 || !(tile.getChildAt(0) instanceof FrameLayout)) continue;
+            FrameLayout art = (FrameLayout) tile.getChildAt(0);
+            Rect visible = new Rect();
+            if (!art.getGlobalVisibleRect(visible)) continue;
+            TextView fallback = null;
+            ImageView image = null;
+            for (int j = 0; j < art.getChildCount(); j++) {
+                View item = art.getChildAt(j);
+                if (item instanceof TextView && fallback == null) fallback = (TextView) item;
+                if (item instanceof ImageView) {
+                    image = (ImageView) item;
+                    break;
+                }
+            }
+            if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) continue;
+            Object tag = image.getTag();
+            if (tag instanceof Entry) {
+                Entry entry = (Entry) tag;
+                loadThumbnail(image, entry.logo, image.getWidth(), image.getHeight(), fallback);
+            }
+        }
+    }
     private void loadThumbnail(ImageView target,String url,int width,int height){
-        if(url==null||url.trim().isEmpty()||url.equals(target.getTag()))return;
+        loadThumbnail(target, url, width, height, null);
+    }
+
+    private void loadThumbnail(ImageView target, String url, int width, int height, TextView fallback) {
+        if (url == null || url.trim().isEmpty()) {
+            if (fallback != null) fallback.setVisibility(View.VISIBLE);
+            return;
+        }
+        if (url.equals(target.getTag())) {
+            if (fallback != null) fallback.setVisibility(target.getDrawable() == null ? View.VISIBLE : View.GONE);
+            return;
+        }
+        if (fallback != null) fallback.setVisibility(View.VISIBLE);
         target.setTag(url);
         
         // Check memory cache first
         Bitmap cached = thumbnailMemory.get(url);
         if(cached != null) {
-            if (target.getDrawable() == null) {
-                target.setImageBitmap(cached);
-            } else {
-                // Fade in animation for cached images
-                target.setImageBitmap(cached);
-            }
+            target.setImageBitmap(cached);
+            if (fallback != null) fallback.setVisibility(View.GONE);
             return;
         }
         
@@ -1124,6 +1166,7 @@ public class MainActivity extends Activity {
                             target.setImageDrawable(td);
                             td.startTransition(150);
                         }
+                        if (fallback != null) fallback.setVisibility(View.GONE);
                     }
                 });
             }
