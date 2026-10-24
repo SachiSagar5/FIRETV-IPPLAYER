@@ -1,40 +1,46 @@
 package tv.sachin.streamshelf;
 
 import android.app.*;
-import android.os.*;
 import android.content.*;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.*;
+import android.graphics.drawable.shapes.RectShape;
+import android.os.*;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.text.TextUtils;
 import android.util.Base64;
-import android.util.LruCache;
 import android.util.Log;
+import android.util.LruCache;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import android.view.Gravity;
 import android.text.InputType;
+import android.text.format.DateFormat;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
-import org.json.*;
+import androidx.core.content.ContextCompat;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
+import org.json.*;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -246,21 +252,231 @@ public class MainActivity extends Activity {
     private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(category.equals(String.valueOf(tab.getTag())))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
     private void requestInitialFocus(){if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});}
     private void focusFirstContent(){content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});}
-    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event){
-        if(event.getAction()==android.view.KeyEvent.ACTION_DOWN){
-            int key=event.getKeyCode();
-            if(playing&&key==android.view.KeyEvent.KEYCODE_BACK){onBackPressed();return true;}
-            if(playing&&player!=null&&(key==android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE||key==android.view.KeyEvent.KEYCODE_MEDIA_PLAY||key==android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)){if(key==android.view.KeyEvent.KEYCODE_MEDIA_PLAY)player.play();else if(key==android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)player.pause();else if(player.isPlaying())player.pause();else player.play();return true;}
-            if(playing&&player!=null&&(key==android.view.KeyEvent.KEYCODE_MEDIA_REWIND||key==android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)&&player.isCurrentMediaItemSeekable()){long position=player.getCurrentPosition();long duration=player.getDuration();long next=position+(key==android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD?10000:-10000);player.seekTo(Math.max(0,duration>0?Math.min(duration,next):next));return true;}
-            if(!playing&&key==android.view.KeyEvent.KEYCODE_SEARCH){searchDialog();return true;}
-            if(!playing&&key==android.view.KeyEvent.KEYCODE_MENU){View focused=getCurrentFocus();Object tag=focused==null?null:focused.getTag();if(tag instanceof Entry){toggleFavorite((Entry)tag);return true;}sourceDialog();return true;}
-            if(!playing&&key==android.view.KeyEvent.KEYCODE_DPAD_RIGHT&&categoryTabs.contains(getCurrentFocus())){focusFirstContent();return true;}
-            if(!playing&&key==android.view.KeyEvent.KEYCODE_DPAD_LEFT&&getCurrentFocus()==firstContentItem){TextView target=currentCategoryTab();if(target!=null){target.requestFocus();return true;}}
-            if(!playing&&getCurrentFocus()==null&&event.getRepeatCount()==0&&(key==android.view.KeyEvent.KEYCODE_DPAD_UP||key==android.view.KeyEvent.KEYCODE_DPAD_DOWN||key==android.view.KeyEvent.KEYCODE_DPAD_LEFT||key==android.view.KeyEvent.KEYCODE_DPAD_RIGHT||key==android.view.KeyEvent.KEYCODE_DPAD_CENTER||key==android.view.KeyEvent.KEYCODE_ENTER||key==android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)){
-                requestInitialFocus();return true;
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+            int key = event.getKeyCode();
+
+            if (playing) {
+                // Back key: hide controls first, then exit
+                if (key == android.view.KeyEvent.KEYCODE_BACK) {
+                    if (controlsVisible) {
+                        showControls(false);
+                        return true;
+                    } else {
+                        onBackPressed();
+                        return true;
+                    }
+                }
+
+                // Media keys
+                if (player != null && (key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                        || key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY
+                        || key == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)) {
+                    if (key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) player.play();
+                    else if (key == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE) player.pause();
+                    else if (player.isPlaying()) player.pause();
+                    else player.play();
+                    return true;
+                }
+
+                if (player != null && (key == android.view.KeyEvent.KEYCODE_MEDIA_REWIND
+                        || key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
+                        && player.isCurrentMediaItemSeekable()) {
+                    long position = player.getCurrentPosition();
+                    long duration = player.getDuration();
+                    long next = position + (key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
+                    player.seekTo(Math.max(0, duration > 0 ? Math.min(duration, next) : next));
+                    showControls(true);
+                    return true;
+                }
+
+                // D-pad navigation for custom player controls
+                if (key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                        || key == android.view.KeyEvent.KEYCODE_ENTER
+                        || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    // Show controls if hidden, otherwise click focused view
+                    if (!controlsVisible) {
+                        showControls(true);
+                    } else {
+                        View focused = getCurrentFocus();
+                        if (focused != null && focused.isClickable()) {
+                            focused.performClick();
+                        }
+                    }
+                    return true;
+                }
+
+                // D-pad Up/Down: navigate between control groups (top bar -> timeline -> bottom controls)
+                if (key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (!controlsVisible) {
+                        showControls(true);
+                        return true;
+                    }
+                    handleVerticalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+                    return true;
+                }
+
+                // D-pad Left/Right: seek when timeline focused, otherwise navigate between controls
+                if (key == android.view.KeyEvent.KEYCODE_DPAD_LEFT || key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (!controlsVisible) {
+                        showControls(true);
+                        return true;
+                    }
+                    View focused = getCurrentFocus();
+                    if (focused == progressBar) {
+                        // Seeking handled by SeekBar's internal key handling
+                        return false; // Let SeekBar handle it
+                    }
+                    handleHorizontalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+                    return true;
+                }
+
+                // Any other key while playing: show controls
+                showControls(true);
+                return true;
+            }
+
+            // Non-playing keys (existing logic)
+            if (!playing && key == android.view.KeyEvent.KEYCODE_SEARCH) {
+                searchDialog();
+                return true;
+            }
+            if (!playing && key == android.view.KeyEvent.KEYCODE_MENU) {
+                View focused = getCurrentFocus();
+                Object tag = focused == null ? null : focused.getTag();
+                if (tag instanceof Entry) {
+                    toggleFavorite((Entry) tag);
+                    return true;
+                }
+                sourceDialog();
+                return true;
+            }
+            if (!playing && key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT && categoryTabs.contains(getCurrentFocus())) {
+                focusFirstContent();
+                return true;
+            }
+            if (!playing && key == android.view.KeyEvent.KEYCODE_DPAD_LEFT && getCurrentFocus() == firstContentItem) {
+                TextView target = currentCategoryTab();
+                if (target != null) {
+                    target.requestFocus();
+                    return true;
+                }
+            }
+            if (!playing && getCurrentFocus() == null && event.getRepeatCount() == 0
+                    && (key == android.view.KeyEvent.KEYCODE_DPAD_UP
+                    || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                    || key == android.view.KeyEvent.KEYCODE_DPAD_LEFT
+                    || key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+                    || key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                    || key == android.view.KeyEvent.KEYCODE_ENTER
+                    || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                requestInitialFocus();
+                return true;
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    private void handleVerticalNavigation(boolean down) {
+        View focused = getCurrentFocus();
+        if (focused == null) {
+            // Default to center play/pause
+            if (centerPlayPauseBtn != null) centerPlayPauseBtn.requestFocus();
+            return;
+        }
+
+        // Define focus groups vertically
+        // Group 1: Top bar (back, cc, settings)
+        // Group 2: Timeline (progress bar)
+        // Group 3: Bottom controls
+        // Group 4: Center play/pause (when visible)
+
+        boolean isTopBar = focused == backBtn || focused == ccBtn || focused == settingsBtn;
+        boolean isTimeline = focused == progressBar;
+        boolean isBottom = isBottomControl(focused);
+        boolean isCenter = focused == centerPlayPauseBtn;
+
+        if (down) {
+            if (isTopBar) {
+                progressBar.requestFocus();
+            } else if (isTimeline) {
+                if (bottomControls.getVisibility() == View.VISIBLE && controlOrder.length > 0) {
+                    controlOrder[0].requestFocus(); // First bottom control
+                }
+            } else if (isBottom) {
+                // Stay on bottom, or go to center if visible
+                if (centerControls.getVisibility() == View.VISIBLE) {
+                    centerPlayPauseBtn.requestFocus();
+                }
+            } else if (isCenter) {
+                // From center, go to bottom
+                if (bottomControls.getVisibility() == View.VISIBLE && controlOrder.length > 0) {
+                    controlOrder[0].requestFocus();
+                }
+            }
+        } else { // UP
+            if (isBottom) {
+                progressBar.requestFocus();
+            } else if (isTimeline) {
+                // Go to top bar - focus back button
+                backBtn.requestFocus();
+            } else if (isTopBar) {
+                // From top, go to center if visible, else bottom
+                if (centerControls.getVisibility() == View.VISIBLE) {
+                    centerPlayPauseBtn.requestFocus();
+                } else if (bottomControls.getVisibility() == View.VISIBLE && controlOrder.length > 0) {
+                    controlOrder[0].requestFocus();
+                }
+            } else if (isCenter) {
+                progressBar.requestFocus();
+            }
+        }
+    }
+
+    private boolean isBottomControl(View v) {
+        for (View ctrl : controlOrder) {
+            if (ctrl == v) return true;
+        }
+        return false;
+    }
+
+    private void handleHorizontalNavigation(boolean right) {
+        View focused = getCurrentFocus();
+        if (focused == null) {
+            if (centerControls.getVisibility() == View.VISIBLE) {
+                centerPlayPauseBtn.requestFocus();
+            } else if (controlOrder.length > 0) {
+                controlOrder[0].requestFocus();
+            }
+            return;
+        }
+
+        // If on bottom controls, navigate between them
+        if (isBottomControl(focused)) {
+            int idx = -1;
+            for (int i = 0; i < controlOrder.length; i++) {
+                if (controlOrder[i] == focused) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx >= 0) {
+                int newIdx = right ? Math.min(idx + 1, controlOrder.length - 1) : Math.max(idx - 1, 0);
+                controlOrder[newIdx].requestFocus();
+            }
+        } else if (focused == backBtn) {
+            if (right && ccBtn != null) ccBtn.requestFocus();
+        } else if (focused == ccBtn) {
+            if (right && settingsBtn != null) settingsBtn.requestFocus();
+            else if (!right) backBtn.requestFocus();
+        } else if (focused == settingsBtn) {
+            if (!right) ccBtn.requestFocus();
+        } else if (focused == centerPlayPauseBtn) {
+            // Center button - go to bottom controls
+            if (controlOrder.length > 0) {
+                controlOrder[0].requestFocus();
+            }
+        }
     }
     private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});});}
     private String afterComma(String s){int i=s.indexOf(',');String v=i>=0?s.substring(i+1).trim():"Untitled";return v.isEmpty()?"Untitled":v;}
@@ -269,30 +485,33 @@ public class MainActivity extends Activity {
     private void sourceDialog(){LinearLayout box=new LinearLayout(this);box.setPadding(dp(20),dp(10),dp(20),0);box.setOrientation(LinearLayout.VERTICAL);EditText name=new EditText(this);name.setHint("Playlist name");box.addView(name);EditText url=new EditText(this);url.setHint("M3U URL (http:// or https://)");url.setSingleLine(true);url.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);box.addView(url);String[] opts=sources.stream().map(x->x.name).toArray(String[]::new);if(opts.length>0){Spinner sp=new Spinner(this);ArrayList<String> labels=new ArrayList<>();labels.add("Save as new playlist");labels.addAll(Arrays.asList(opts));sp.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));box.addView(sp);new AlertDialog.Builder(this).setTitle("Playlist sources").setView(box).setPositiveButton("Save",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){if(n.isEmpty())n="Playlist "+(sources.size()+1);if(sp.getSelectedItemPosition()>0){activeSource=sp.getSelectedItemPosition()-1;}else sources.add(new Source(n,u));saveSources();loadPlaylist();}}).setNeutralButton("Switch / remove",(d,w)->manageSources()).setNegativeButton("Cancel",null).show();}else new AlertDialog.Builder(this).setTitle("Add playlist source").setView(box).setPositiveButton("Add",(d,w)->{String n=name.getText().toString().trim(),u=url.getText().toString().trim();if(!u.isEmpty()){sources.add(new Source(n.isEmpty()?"Playlist 1":n,u));activeSource=sources.size()-1;saveSources();loadPlaylist();}}).setNegativeButton("Cancel",null).show();}
     private void manageSources(){if(sources.isEmpty())return;String[] names=sources.stream().map(x->x.name).toArray(String[]::new);new AlertDialog.Builder(this).setTitle("Switch playlist").setItems(names,(d,w)->{activeSource=w;loadPlaylist();new AlertDialog.Builder(this).setMessage("Remove "+sources.get(w).name+"?").setPositiveButton("Remove",(a,b)->{sources.remove(w);activeSource=Math.max(0,Math.min(activeSource,sources.size()-1));saveSources();entries.clear();if(sources.isEmpty()){showWelcome();sourceLabel.setText("Choose a playlist source");}else loadPlaylist();}).setNegativeButton("Keep",null).show();}).setNegativeButton("Close",null).show();}
     private void searchDialog(){EditText q=new EditText(this);q.setSingleLine(true);q.setHint("Search this playlist");new AlertDialog.Builder(this).setTitle("Search").setView(q).setPositiveButton("Search",(d,w)->{String needle=q.getText().toString().toLowerCase(Locale.ROOT);content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;for(Entry e:entries)if(e.name.toLowerCase(Locale.ROOT).contains(needle)){Button b=button(e.name);b.setId(View.generateViewId());b.setTag(e);b.setOnClickListener(v->play(e));content.addView(b,new LinearLayout.LayoutParams(-1,dp(56)));if(firstContentItem==null)firstContentItem=b;}if(content.getChildCount()==0){TextView empty=text("No matches",18,MUTED);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;}wireMainFocus();animateContentIn();focusFirstContent();}).setNegativeButton("Cancel",null).show();}
-    private void play(Entry e){
+    private void play(Entry e) {
         try {
-            previousHomeFocus=getCurrentFocus();
-            currentEntry=e;
-            playerOverlay=new FrameLayout(this);
+            previousHomeFocus = getCurrentFocus();
+            currentEntry = e;
+            playerOverlay = new FrameLayout(this);
             playerOverlay.setBackgroundColor(Color.BLACK);
             playerOverlay.setAlpha(0f);
-            playerView=new PlayerView(this);
-            playerView.setUseController(true);
-            playerView.setControllerAutoShow(true);
-            playerView.setControllerHideOnTouch(true);
-            playerView.setControllerShowTimeoutMs(6500);
-            playerView.setKeepContentOnPlayerReset(true);
+
+            playerView = new PlayerView(this);
+            playerView.setUseController(false); // Disable default controller - we use custom
             playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
             playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);
-            playerView.setFocusable(true);
-            playerOverlay.addView(playerView,new FrameLayout.LayoutParams(-1,-1));
-            buildPlayerStatusPanels();
+            playerView.setFocusable(false);
+            playerOverlay.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
+
+            buildCustomPlayerUI();
             setContentView(playerOverlay);
             playerOverlay.animate().alpha(1f).setDuration(140).start();
-            playing=true;
+            playing = true;
+            isPlaying = true; // Start in playing state
             acquireWakeLock();
             startPlayback();
-            playerView.requestFocus();
+            showControls(true);
+            // Focus the center play/pause button initially
+            if (centerPlayPauseBtn != null) {
+                centerPlayPauseBtn.requestFocus();
+            }
         } catch (Exception ex) {
             Log.e(TAG, "Error initializing playback", ex);
             showPlaybackError();
@@ -311,9 +530,590 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void buildPlayerStatusPanels(){
-        playerLoadingPanel=new LinearLayout(this);playerLoadingPanel.setOrientation(LinearLayout.VERTICAL);playerLoadingPanel.setGravity(Gravity.CENTER);playerLoadingPanel.setPadding(dp(28),dp(20),dp(28),dp(20));playerLoadingPanel.setBackground(rounded(0xdd17191e,12));ProgressBar spinner=new ProgressBar(this);playerLoadingPanel.addView(spinner,new LinearLayout.LayoutParams(dp(42),dp(42)));playerLoadingText=text("Connecting to stream…",17,WHITE);playerLoadingText.setGravity(Gravity.CENTER);playerLoadingText.setPadding(0,dp(12),0,0);playerLoadingPanel.addView(playerLoadingText);FrameLayout.LayoutParams loadingParams=new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER);playerOverlay.addView(playerLoadingPanel,loadingParams);
-        playerErrorPanel=new LinearLayout(this);playerErrorPanel.setOrientation(LinearLayout.VERTICAL);playerErrorPanel.setGravity(Gravity.CENTER);playerErrorPanel.setPadding(dp(28),dp(20),dp(28),dp(20));playerErrorPanel.setBackground(rounded(0xff202126,12));TextView error=text("This stream could not be played. Check the playlist or network, then retry.",18,WHITE);error.setGravity(Gravity.CENTER);error.setMaxWidth(dp(460));playerErrorPanel.addView(error);LinearLayout actions=new LinearLayout(this);actions.setGravity(Gravity.CENTER);retryPlaybackButton=button("Retry");retryPlaybackButton.setOnClickListener(v->startPlayback());Button browse=button("Back to browse");LinearLayout.LayoutParams actionParams=new LinearLayout.LayoutParams(-2,dp(54));actionParams.setMargins(dp(8),dp(14),dp(8),0);actions.addView(retryPlaybackButton,actionParams);actions.addView(browse,actionParams);browse.setOnClickListener(v->onBackPressed());playerErrorPanel.addView(actions);playerOverlay.addView(playerErrorPanel,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));playerErrorPanel.setVisibility(View.GONE);}
+    // ==================== CUSTOM PLAYER UI (NETFLIX-STYLE) ====================
+
+    // Top bar views
+    private LinearLayout topBar;
+    private ImageView backBtn;
+    private TextView titleText, metadataText, clockText;
+    private LinearLayout topBadges;
+    private TextView qualityBadge, audioBadge;
+    private ImageView ccBtn, settingsBtn;
+
+    // Center controls
+    private FrameLayout centerControls;
+    private ImageView centerPlayPauseBtn;
+    private boolean isPlaying = true;
+
+    // Timeline
+    private LinearLayout timelineContainer;
+    private TextView currentTimeText, totalTimeText;
+    private SeekBar progressBar;
+    private Handler timelineHandler = new Handler(Looper.getMainLooper());
+    private Runnable timelineUpdater;
+
+    // Bottom controls
+    private LinearLayout bottomControls;
+    private TextView rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn;
+    private TextView rewindLabel, playPauseLabel, forwardLabel, subtitlesLabel, qualityLabel, fullscreenLabel;
+    private View focusedControl = null;
+    private int focusedControlIndex = 0;
+    private View[] controlOrder; // For D-pad navigation order
+
+    // Control visibility
+    private boolean controlsVisible = false;
+    private Handler hideControlsHandler = new Handler(Looper.getMainLooper());
+    private Runnable hideControlsRunnable;
+    private static final int CONTROLS_HIDE_DELAY_MS = 5000;
+
+    private void buildCustomPlayerUI() {
+        // --- TOP BAR ---
+        topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(dp(24), dp(16), dp(24), dp(16));
+        // Gradient overlay for readability
+        GradientDrawable topGradient = new GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[]{0xCC000000, 0x88000000, 0x00000000}
+        );
+        topBar.setBackground(topGradient);
+
+        // Back button
+        backBtn = new ImageView(this);
+        backBtn.setImageResource(android.R.drawable.ic_menu_revert); // Use system back icon
+        backBtn.setColorFilter(WHITE);
+        backBtn.setPadding(dp(8), dp(8), dp(8), dp(8));
+        backBtn.setFocusable(true);
+        backBtn.setClickable(true);
+        backBtn.setContentDescription("Back");
+        backBtn.setOnClickListener(v -> onBackPressed());
+        setFocusStyleView(backBtn, dp(28));
+        LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(dp(44), dp(44));
+        topBar.addView(backBtn, backParams);
+
+        // Title
+        titleText = new TextView(this);
+        titleText.setText(currentEntry != null ? currentEntry.name : "Stream");
+        titleText.setTextColor(WHITE);
+        titleText.setTextSize(18);
+        titleText.setTypeface(null, Typeface.BOLD);
+        titleText.setMaxLines(1);
+        titleText.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, dp(44), 1);
+        titleParams.setMargins(dp(16), 0, dp(16), 0);
+        topBar.addView(titleText, titleParams);
+
+        // Metadata container
+        LinearLayout metaContainer = new LinearLayout(this);
+        metaContainer.setOrientation(LinearLayout.VERTICAL);
+        metaContainer.setGravity(Gravity.CENTER_VERTICAL);
+
+        metadataText = new TextView(this);
+        metadataText.setText(buildMetadataString());
+        metadataText.setTextColor(0xFFB0B0B0);
+        metadataText.setTextSize(11);
+        metadataText.setMaxLines(1);
+        metadataText.setEllipsize(TextUtils.TruncateAt.END);
+        metaContainer.addView(metadataText);
+
+        // Badges row
+        topBadges = new LinearLayout(this);
+        topBadges.setOrientation(LinearLayout.HORIZONTAL);
+        topBadges.setGravity(Gravity.CENTER_VERTICAL);
+
+        qualityBadge = createBadge(inferQualityLabel(currentEntry != null ? currentEntry.url : ""));
+        audioBadge = createBadge("5.1");
+        topBadges.addView(qualityBadge);
+        topBadges.addView(audioBadge);
+        metaContainer.addView(topBadges);
+
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-2, -2);
+        metaParams.setMargins(0, 0, dp(24), 0);
+        topBar.addView(metaContainer, metaParams);
+
+        // Right side: CC, Settings, Clock
+        LinearLayout rightContainer = new LinearLayout(this);
+        rightContainer.setOrientation(LinearLayout.HORIZONTAL);
+        rightContainer.setGravity(Gravity.CENTER_VERTICAL);
+
+        ccBtn = createIconButton(android.R.drawable.ic_menu_report_image, "Subtitles");
+        settingsBtn = createIconButton(android.R.drawable.ic_menu_preferences, "Settings");
+        clockText = new TextView(this);
+        clockText.setText(new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date()));
+        clockText.setTextColor(WHITE);
+        clockText.setTextSize(14);
+        clockText.setTypeface(null, Typeface.BOLD);
+        clockText.setPadding(dp(16), 0, 0, 0);
+
+        rightContainer.addView(ccBtn);
+        rightContainer.addView(settingsBtn);
+        rightContainer.addView(clockText);
+
+        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(-2, -2);
+        topBar.addView(rightContainer, rightParams);
+
+        FrameLayout.LayoutParams topBarParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        playerOverlay.addView(topBar, topBarParams);
+
+        // --- CENTER PLAY/PAUSE ---
+        centerControls = new FrameLayout(this);
+        centerControls.setLayoutParams(new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+
+        centerPlayPauseBtn = new ImageView(this);
+        centerPlayPauseBtn.setImageDrawable(createPlayPauseDrawable(true));
+        centerPlayPauseBtn.setColorFilter(WHITE);
+        centerPlayPauseBtn.setBackground(createCircleBackground(0xAA000000, 0xFFFFFFFF));
+        centerPlayPauseBtn.setPadding(dp(24), dp(24), dp(24), dp(24));
+        centerPlayPauseBtn.setFocusable(true);
+        centerPlayPauseBtn.setClickable(true);
+        centerPlayPauseBtn.setContentDescription("Play/Pause");
+        centerPlayPauseBtn.setOnClickListener(v -> togglePlayPause());
+        setFocusStyleView(centerPlayPauseBtn, dp(88));
+        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(dp(88), dp(88), Gravity.CENTER);
+        centerControls.addView(centerPlayPauseBtn, centerParams);
+
+        playerOverlay.addView(centerControls);
+
+        // --- TIMELINE ---
+        timelineContainer = new LinearLayout(this);
+        timelineContainer.setOrientation(LinearLayout.HORIZONTAL);
+        timelineContainer.setGravity(Gravity.CENTER_VERTICAL);
+        timelineContainer.setPadding(dp(48), 0, dp(48), dp(24));
+        // Bottom gradient overlay
+        GradientDrawable bottomGradient = new GradientDrawable(
+            GradientDrawable.Orientation.BOTTOM_TOP,
+            new int[]{0xCC000000, 0x88000000, 0x00000000}
+        );
+        timelineContainer.setBackground(bottomGradient);
+
+        currentTimeText = new TextView(this);
+        currentTimeText.setText("0:00");
+        currentTimeText.setTextColor(WHITE);
+        currentTimeText.setTextSize(13);
+        currentTimeText.setTypeface(null, Typeface.MONOSPACE);
+        currentTimeText.setMinWidth(dp(60));
+        currentTimeText.setGravity(Gravity.CENTER);
+        timelineContainer.addView(currentTimeText, new LinearLayout.LayoutParams(-2, -2));
+
+        progressBar = new SeekBar(this);
+        progressBar.setMax(10000); // High precision for seeking
+        progressBar.setProgress(0);
+        progressBar.setThumb(createSeekThumb());
+        progressBar.setSplitTrack(false);
+        // Custom progress drawable with red progress
+        progressBar.setProgressDrawable(createProgressDrawable());
+        progressBar.setFocusable(true);
+        progressBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            private boolean userSeeking = false;
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {
+                userSeeking = true;
+                cancelHideControls();
+            }
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser && player != null && player.getDuration() > 0) {
+                    long newPos = (progress * player.getDuration()) / 10000L;
+                    currentTimeText.setText(formatTime(newPos));
+                }
+            }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                if (player != null && player.getDuration() > 0) {
+                    long newPos = (seekBar.getProgress() * player.getDuration()) / 10000L;
+                    player.seekTo(newPos);
+                }
+                userSeeking = false;
+                scheduleHideControls();
+            }
+        });
+        LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(0, dp(36), 1);
+        progressParams.setMargins(dp(16), 0, dp(16), 0);
+        timelineContainer.addView(progressBar, progressParams);
+
+        totalTimeText = new TextView(this);
+        totalTimeText.setText("0:00");
+        totalTimeText.setTextColor(WHITE);
+        totalTimeText.setTextSize(13);
+        totalTimeText.setTypeface(null, Typeface.MONOSPACE);
+        totalTimeText.setMinWidth(dp(60));
+        totalTimeText.setGravity(Gravity.CENTER);
+        timelineContainer.addView(totalTimeText, new LinearLayout.LayoutParams(-2, -2));
+
+        FrameLayout.LayoutParams timelineParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        timelineParams.setMargins(0, 0, 0, dp(120)); // Above bottom controls
+        playerOverlay.addView(timelineContainer, timelineParams);
+
+        // --- BOTTOM CONTROLS ---
+        bottomControls = new LinearLayout(this);
+        bottomControls.setOrientation(LinearLayout.HORIZONTAL);
+        bottomControls.setGravity(Gravity.CENTER);
+        bottomControls.setPadding(dp(32), dp(16), dp(32), dp(24));
+        bottomControls.setBackground(bottomGradient);
+
+        // Create control buttons with labels
+        rewindBtn = createControlButton("⏪", "Rewind 10s");
+        playPauseBtn = createControlButton("⏸", "Pause");
+        forwardBtn = createControlButton("⏩", "Forward 10s");
+        subtitlesBtn = createControlButton("CC", "Subtitles: Off");
+        qualityBtn = createControlButton("HD", "Quality: Auto");
+        fullscreenBtn = createControlButton("⛶", "Fullscreen");
+
+        // Set click listeners
+        rewindBtn.setOnClickListener(v -> seekRelative(-10000));
+        playPauseBtn.setOnClickListener(v -> togglePlayPause());
+        forwardBtn.setOnClickListener(v -> seekRelative(10000));
+        subtitlesBtn.setOnClickListener(v -> showSubtitleDialog());
+        qualityBtn.setOnClickListener(v -> showQualityDialog());
+        fullscreenBtn.setOnClickListener(v -> toggleFullscreen());
+
+        // Control order for D-pad navigation (Left/Right)
+        controlOrder = new View[]{rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn};
+
+        // Initially hide bottom controls (only timeline + center visible)
+        bottomControls.setVisibility(View.GONE);
+
+        FrameLayout.LayoutParams bottomParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        playerOverlay.addView(bottomControls, bottomParams);
+
+        // --- LOADING / ERROR PANELS (reuse existing) ---
+        buildPlayerStatusPanels();
+
+        // Start timeline updater
+        startTimelineUpdater();
+
+        // Update clock periodically
+        startClockUpdater();
+    }
+
+    private void buildPlayerStatusPanels() {
+        playerLoadingPanel = new LinearLayout(this);
+        playerLoadingPanel.setOrientation(LinearLayout.VERTICAL);
+        playerLoadingPanel.setGravity(Gravity.CENTER);
+        playerLoadingPanel.setPadding(dp(28), dp(20), dp(28), dp(20));
+        playerLoadingPanel.setBackground(rounded(0xDD17191E, 12));
+        ProgressBar spinner = new ProgressBar(this);
+        playerLoadingPanel.addView(spinner, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        playerLoadingText = text("Connecting to stream…", 17, WHITE);
+        playerLoadingText.setGravity(Gravity.CENTER);
+        playerLoadingText.setPadding(0, dp(12), 0, 0);
+        playerLoadingPanel.addView(playerLoadingText);
+        FrameLayout.LayoutParams loadingParams = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER);
+        playerOverlay.addView(playerLoadingPanel, loadingParams);
+
+        playerErrorPanel = new LinearLayout(this);
+        playerErrorPanel.setOrientation(LinearLayout.VERTICAL);
+        playerErrorPanel.setGravity(Gravity.CENTER);
+        playerErrorPanel.setPadding(dp(28), dp(20), dp(28), dp(20));
+        playerErrorPanel.setBackground(rounded(0xFF202126, 12));
+        TextView error = text("This stream could not be played. Check the playlist or network, then retry.", 18, WHITE);
+        error.setGravity(Gravity.CENTER);
+        error.setMaxWidth(dp(460));
+        playerErrorPanel.addView(error);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER);
+        retryPlaybackButton = button("Retry");
+        retryPlaybackButton.setOnClickListener(v -> startPlayback());
+        Button browse = button("Back to browse");
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-2, dp(54));
+        actionParams.setMargins(dp(8), dp(14), dp(8), 0);
+        actions.addView(retryPlaybackButton, actionParams);
+        actions.addView(browse, actionParams);
+        browse.setOnClickListener(v -> onBackPressed());
+        playerErrorPanel.addView(actions);
+        playerOverlay.addView(playerErrorPanel, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        playerErrorPanel.setVisibility(View.GONE);
+    }
+
+    private String buildMetadataString() {
+        if (currentEntry == null) return "";
+        StringBuilder sb = new StringBuilder();
+        if (!currentEntry.group.isEmpty()) {
+            sb.append(currentEntry.group).append(" · ");
+        }
+        sb.append(currentEntry.type);
+        return sb.toString();
+    }
+
+    private String inferQualityLabel(String url) {
+        String lower = url.toLowerCase(Locale.ROOT);
+        if (lower.contains("4k") || lower.contains("2160")) return "4K";
+        if (lower.contains("1080") || lower.contains("fhd")) return "1080p";
+        if (lower.contains("720") || lower.contains("hd")) return "720p";
+        return "HD";
+    }
+
+    private TextView createBadge(String text) {
+        TextView badge = new TextView(this);
+        badge.setText(text);
+        badge.setTextColor(WHITE);
+        badge.setTextSize(10);
+        badge.setTypeface(null, Typeface.BOLD);
+        badge.setPadding(dp(8), dp(3), dp(8), dp(3));
+        badge.setBackground(rounded(0xFF1A1A1A, 4));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+        p.setMargins(0, dp(2), dp(6), 0);
+        badge.setLayoutParams(p);
+        return badge;
+    }
+
+    private ImageView createIconButton(int resId, String desc) {
+        ImageView btn = new ImageView(this);
+        btn.setImageResource(resId);
+        btn.setColorFilter(WHITE);
+        btn.setPadding(dp(12), dp(12), dp(12), dp(12));
+        btn.setFocusable(true);
+        btn.setClickable(true);
+        btn.setContentDescription(desc);
+        setFocusStyleView(btn, dp(40));
+        return btn;
+    }
+
+    private TextView createControlButton(String iconText, String desc) {
+        TextView btn = new TextView(this);
+        btn.setText(iconText);
+        btn.setTextColor(0xFFE0E0E0);
+        btn.setTextSize(22);
+        btn.setTypeface(null, Typeface.BOLD);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(16), dp(12), dp(16), dp(12));
+        btn.setFocusable(true);
+        btn.setClickable(true);
+        btn.setContentDescription(desc);
+        btn.setTag(desc);
+        setFocusStyleView(btn, dp(48));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+        p.setMargins(0, 0, dp(8), 0);
+        btn.setLayoutParams(p);
+        return btn;
+    }
+
+    private Drawable createPlayPauseDrawable(boolean isPlaying) {
+        // Use system icons
+        return ContextCompat.getDrawable(this, isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play);
+    }
+
+    private GradientDrawable createCircleBackground(int bgColor, int strokeColor) {
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.OVAL);
+        d.setColor(bgColor);
+        d.setStroke(dp(2), strokeColor);
+        return d;
+    }
+
+    private void setFocusStyleView(View view, int size) {
+        view.setOnFocusChangeListener((v, focused) -> {
+            if (focused) {
+                v.animate().cancel();
+                v.animate().scaleX(1.08f).scaleY(1.08f).setDuration(150).start();
+                // Red glow outline
+                if (v.getBackground() instanceof GradientDrawable) {
+                    ((GradientDrawable) v.getBackground()).setStroke(dp(3), RED);
+                }
+                focusedControl = v;
+                focusedControlIndex = indexOfControl(v);
+            } else {
+                v.animate().cancel();
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
+                if (v.getBackground() instanceof GradientDrawable) {
+                    ((GradientDrawable) v.getBackground()).setStroke(dp(2), 0xFFFFFFFF);
+                }
+            }
+        });
+    }
+
+    private int indexOfControl(View v) {
+        for (int i = 0; i < controlOrder.length; i++) {
+            if (controlOrder[i] == v) return i;
+        }
+        // Check other focusable views
+        if (v == backBtn) return -1;
+        if (v == ccBtn) return -2;
+        if (v == settingsBtn) return -3;
+        if (v == centerPlayPauseBtn) return -4;
+        if (v == progressBar) return -5;
+        return -1;
+    }
+
+    private Drawable createSeekThumb() {
+        // White circle with red border
+        GradientDrawable thumb = new GradientDrawable();
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setColor(WHITE);
+        thumb.setStroke(dp(2), RED);
+        thumb.setSize(dp(20), dp(20));
+        return thumb;
+    }
+
+    private Drawable createProgressDrawable() {
+        // Create a proper LayerDrawable for SeekBar with background and progress layers
+        // Background track
+        ShapeDrawable background = new ShapeDrawable(new RoundRectShape(new float[]{dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2)}, null, null));
+        background.getPaint().setColor(0xFF333333);
+        background.setIntrinsicHeight(dp(4));
+
+        // Progress track
+        ShapeDrawable progress = new ShapeDrawable(new RoundRectShape(new float[]{dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2), dp(2)}, null, null));
+        progress.getPaint().setColor(RED);
+        progress.setIntrinsicHeight(dp(4));
+
+        // Wrap progress in ClipDrawable for horizontal clipping
+        ClipDrawable clipProgress = new ClipDrawable(progress, Gravity.LEFT, ClipDrawable.HORIZONTAL);
+
+        LayerDrawable layerDrawable = new LayerDrawable(new Drawable[]{
+            background,
+            clipProgress
+        });
+        layerDrawable.setId(0, android.R.id.background);
+        layerDrawable.setId(1, android.R.id.progress);
+        return layerDrawable;
+    }
+
+    private void startTimelineUpdater() {
+        timelineUpdater = new Runnable() {
+            @Override public void run() {
+                if (player != null && playing && controlsVisible) {
+                    long pos = player.getCurrentPosition();
+                    long dur = player.getDuration();
+                    if (dur > 0 && dur != Long.MAX_VALUE) {
+                        // VOD content - show timeline
+                        int progress = (int) ((pos * 10000L) / dur);
+                        progressBar.setProgress(progress);
+                        currentTimeText.setText(formatTime(pos));
+                        totalTimeText.setText(formatTime(dur));
+                        timelineContainer.setVisibility(View.VISIBLE);
+                    } else {
+                        // Live stream - hide timeline or show LIVE
+                        timelineContainer.setVisibility(View.GONE);
+                    }
+                }
+                timelineHandler.postDelayed(this, 500);
+            }
+        };
+        timelineHandler.post(timelineUpdater);
+    }
+
+    private void startClockUpdater() {
+        handler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (clockText != null && playing) {
+                    clockText.setText(new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date()));
+                }
+                handler.postDelayed(this, 30000); // Update every 30s
+            }
+        }, 30000);
+    }
+
+    private Handler handler = new Handler(Looper.getMainLooper());
+
+    private String formatTime(long ms) {
+        if (ms <= 0) return "0:00";
+        long totalSeconds = ms / 1000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+        if (hours > 0) {
+            return String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds);
+        } else {
+            return String.format(Locale.ROOT, "%d:%02d", minutes, seconds);
+        }
+    }
+
+    private void showControls(boolean show) {
+        controlsVisible = show;
+        if (show) {
+            topBar.animate().alpha(1f).setDuration(300).start();
+            centerControls.setVisibility(isPlaying ? View.GONE : View.VISIBLE); // Show center only when paused
+            timelineContainer.animate().alpha(1f).setDuration(300).start();
+            bottomControls.setVisibility(View.VISIBLE);
+            bottomControls.animate().alpha(1f).setDuration(300).start();
+            scheduleHideControls();
+        } else {
+            topBar.animate().alpha(0f).setDuration(300).start();
+            centerControls.animate().alpha(0f).setDuration(300).withEndAction(() -> centerControls.setVisibility(View.GONE)).start();
+            timelineContainer.animate().alpha(0f).setDuration(300).start();
+            bottomControls.animate().alpha(0f).setDuration(300).withEndAction(() -> bottomControls.setVisibility(View.GONE)).start();
+            cancelHideControls();
+        }
+    }
+
+    private void scheduleHideControls() {
+        cancelHideControls();
+        hideControlsRunnable = () -> {
+            if (controlsVisible && player != null && isPlaying) {
+                showControls(false);
+            }
+        };
+        hideControlsHandler.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS);
+    }
+
+    private void cancelHideControls() {
+        if (hideControlsRunnable != null) {
+            hideControlsHandler.removeCallbacks(hideControlsRunnable);
+        }
+    }
+
+    private void updatePlayPauseUI() {
+        if (playPauseBtn != null) {
+            playPauseBtn.setText(isPlaying ? "⏸" : "▶");
+            playPauseBtn.setContentDescription(isPlaying ? "Pause" : "Play");
+        }
+        if (centerPlayPauseBtn != null) {
+            centerPlayPauseBtn.setImageDrawable(createPlayPauseDrawable(isPlaying));
+            centerPlayPauseBtn.setContentDescription(isPlaying ? "Pause" : "Play");
+        }
+        if (isPlaying) {
+            centerControls.setVisibility(View.GONE);
+        } else {
+            centerControls.setVisibility(View.VISIBLE);
+            centerControls.setAlpha(1f);
+        }
+    }
+
+    private void togglePlayPause() {
+        if (player == null) return;
+        isPlaying = !isPlaying;
+        if (isPlaying) {
+            player.play();
+        } else {
+            player.pause();
+        }
+        updatePlayPauseUI();
+        if (!isPlaying) {
+            cancelHideControls(); // Keep controls visible when paused
+        }
+        scheduleHideControls();
+    }
+
+    private void seekRelative(long ms) {
+        if (player == null) return;
+        long newPos = Math.max(0, Math.min(player.getDuration(), player.getCurrentPosition() + ms));
+        player.seekTo(newPos);
+        cancelHideControls();
+        scheduleHideControls();
+    }
+
+    private void showSubtitleDialog() {
+        // TODO: Implement subtitle track selection
+        Toast.makeText(this, "Subtitle tracks not available", Toast.LENGTH_SHORT).show();
+    }
+
+    private void showQualityDialog() {
+        // TODO: Implement quality selection for adaptive streams
+        String[] qualities = {"Auto", "4K", "1080p", "720p"};
+        new AlertDialog.Builder(this)
+            .setTitle("Video Quality")
+            .setItems(qualities, (d, w) -> {
+                qualityBtn.setContentDescription("Quality: " + qualities[w]);
+                Toast.makeText(this, "Quality set to " + qualities[w], Toast.LENGTH_SHORT).show();
+            })
+            .show();
+    }
+
+    private void toggleFullscreen() {
+        // Already fullscreen on TV, but could toggle immersive mode
+        applyImmersiveFullscreen();
+        Toast.makeText(this, "Fullscreen", Toast.LENGTH_SHORT).show();
+    }
+
     private void startPlayback(){
         if (currentEntry == null || playerOverlay == null) return;
         final Entry entry = currentEntry;
@@ -347,9 +1147,14 @@ public class MainActivity extends Activity {
                             if (state == Player.STATE_BUFFERING) {
                                 playerLoadingText.setText("Buffering " + entry.name + "…");
                                 playerLoadingPanel.setVisibility(View.VISIBLE);
+                                isPlaying = false;
+                                updatePlayPauseUI();
                             } else if (state == Player.STATE_READY) {
                                 playerLoadingPanel.setVisibility(View.GONE);
                                 playerErrorPanel.setVisibility(View.GONE);
+                                isPlaying = player.isPlaying();
+                                updatePlayPauseUI();
+                                showControls(true);
                             } else if (state == Player.STATE_ENDED) {
                                 onPlaybackEnded();
                             } else if (state == Player.STATE_IDLE && player.getPlayerError() != null) {
@@ -364,8 +1169,14 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> showPlaybackError());
                 }
 
-                @Override public void onIsPlayingChanged(boolean isPlaying) {
-                    // Track playing state
+                @Override public void onIsPlayingChanged(boolean playingState) {
+                    isPlaying = playingState;
+                    updatePlayPauseUI();
+                    if (playingState) {
+                        scheduleHideControls();
+                    } else {
+                        cancelHideControls();
+                    }
                 }
             });
 
@@ -422,11 +1233,17 @@ public class MainActivity extends Activity {
     @Override public void onBackPressed(){
         if (playing) {
             releaseWakeLock();
+            cancelHideControls();
+            if (timelineUpdater != null) timelineHandler.removeCallbacks(timelineUpdater);
+            if (handler != null) handler.removeCallbacksAndMessages(null);
+            if (hideControlsHandler != null) hideControlsHandler.removeCallbacksAndMessages(null);
+
             if (player != null) {
                 try { player.release(); } catch (Exception ignored) {}
                 player = null;
             }
             playing = false;
+            isPlaying = false;
             currentEntry = null;
             setContentView(root);
             root.setAlpha(0f);
@@ -441,6 +1258,13 @@ public class MainActivity extends Activity {
             playerOverlay = null;
             playerLoadingPanel = null;
             playerErrorPanel = null;
+            // Clear custom UI refs
+            topBar = null;
+            centerControls = null;
+            timelineContainer = null;
+            bottomControls = null;
+            progressBar = null;
+            controlOrder = null;
             return;
         }
         super.onBackPressed();
@@ -489,6 +1313,12 @@ public class MainActivity extends Activity {
         if (networkCallback != null && connectivityManager != null) {
             try { connectivityManager.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
         }
+        // Clean up player UI handlers
+        cancelHideControls();
+        if (timelineUpdater != null) timelineHandler.removeCallbacks(timelineUpdater);
+        if (handler != null) handler.removeCallbacksAndMessages(null);
+        if (hideControlsHandler != null) hideControlsHandler.removeCallbacksAndMessages(null);
+
         releaseWakeLock();
         if (player != null) {
             try { player.release(); } catch (Exception ignored) {}
