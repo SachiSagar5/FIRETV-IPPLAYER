@@ -291,7 +291,7 @@ public class MainActivity extends Activity {
         
         appendHomeShelf("Movies","Movies",false);
         appendHomeShelf("Series","Series",false);
-        appendHomeShelf("Live TV","Live",true);
+        appendHomeGrid("Live TV","Live"); // Live TV as card grid
         if(entries.isEmpty()){TextView empty=text("Loading your playlist…",16,MUTED);empty.setPadding(dp(4),dp(12),0,dp(10));content.addView(empty);}
     }
 
@@ -1069,6 +1069,203 @@ public class MainActivity extends Activity {
         content.addView(hsv);
         shelfRows.add(hsv);
         addHomeTiles(hsv, row, shelf, 0, live);}
+
+    private void appendHomeGrid(String title, String type) {
+        ArrayList<Entry> items = new ArrayList<>();
+        for (Entry e : entries) if (e.type.equals(type)) items.add(e);
+        if (items.isEmpty()) return;
+
+        // Sort Live TV: Kannada channels first
+        if (type.equals("Live")) {
+            items.sort((a, b) -> {
+                boolean aKannada = isKannadaChannel(a);
+                boolean bKannada = isKannadaChannel(b);
+                if (aKannada && !bKannada) return -1;
+                if (!aKannada && bKannada) return 1;
+                return 0;
+            });
+        }
+
+        // Category icon mapping
+        int iconRes = 0;
+        int iconColor = WHITE;
+        switch (type) {
+            case "Movies": iconRes = R.drawable.ic_movies; iconColor = 0xFFE50914; break;
+            case "Series": iconRes = R.drawable.ic_series; iconColor = 0xFF9C27B0; break;
+            case "Live": iconRes = R.drawable.ic_live_tv; iconColor = 0xFF4CAF50; break;
+            case "My List": iconRes = R.drawable.ic_my_list; iconColor = 0xFFE91E63; break;
+        }
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(0, dp(8), 0, dp(4));
+
+        ImageView iconView = new ImageView(this);
+        if (iconRes != 0) {
+            iconView.setImageResource(iconRes);
+            iconView.setColorFilter(iconColor);
+        }
+        iconView.setPadding(0, 0, dp(8), 0);
+        iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
+        heading.addView(iconView);
+
+        TextView name = text(title + "  ›", 20, WHITE);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+
+        TextView count = text(items.size() + " channels", 13, 0xFF888888);
+        count.setPadding(0, 0, dp(12), 0);
+        heading.addView(count);
+
+        TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
+        seeAll.setFocusable(true);
+        seeAll.setClickable(true);
+        seeAll.setGravity(Gravity.CENTER);
+        seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+        seeAll.setTag(items);
+        seeAll.setOnClickListener(v -> {
+            ArrayList<Entry> allItems = (ArrayList<Entry>) v.getTag();
+            showAllGrid(title, allItems);
+        });
+        heading.addView(seeAll);
+
+        content.addView(heading);
+
+        // Subtle divider
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1A1A2E);
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(4), 0, dp(8));
+        content.addView(divider);
+
+        // Grid container (4 columns for Live TV)
+        LinearLayout gridContainer = new LinearLayout(this);
+        gridContainer.setOrientation(LinearLayout.VERTICAL);
+        gridContainer.setPadding(dp(14), dp(8), dp(22), dp(16));
+        gridContainer.setClipChildren(false);
+        content.addView(gridContainer);
+
+        final int columns = 4;
+        final int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        final int tileWidth = (screenWidth - dp(14) - dp(22) - dp(12) * (columns - 1)) / columns;
+        final int tileHeight = dp(150);
+        final int artHeight = tileHeight - dp(40);
+
+        // Show first 12 items (3 rows x 4 columns) with "See All" for more
+        int maxItems = Math.min(items.size(), 12);
+        for (int rowStart = 0; rowStart < maxItems; rowStart += columns) {
+            int rowEnd = Math.min(rowStart + columns, maxItems);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_HORIZONTAL);
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.setMargins(0, 0, 0, dp(12));
+            gridContainer.addView(row, rowParams);
+
+            for (int i = rowStart; i < rowEnd; i++) {
+                Entry e = items.get(i);
+                LinearLayout tile = new LinearLayout(this);
+                tile.setOrientation(LinearLayout.VERTICAL);
+                tile.setBackground(rounded(0xff0d141d, 8));
+                tile.setClipChildren(false);
+                tile.setFocusable(true);
+                tile.setClickable(true);
+                tile.setTag(e);
+                tile.setId(View.generateViewId());
+                setFocusStyle(tile, 0xff0d141d, 8);
+                tile.setOnClickListener(v -> play(e));
+
+                FrameLayout art = new FrameLayout(this);
+                art.setBackground(rounded(0xff131a23, 8));
+                art.setClipToOutline(true);
+                LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(-1, artHeight);
+                artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
+                tile.addView(art, artParams);
+
+                TextView placeholder = text("", 25, WHITE);
+                styleArtworkPlaceholder(placeholder, e);
+                art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+
+                ImageView image = new ImageView(this);
+                image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                image.setTag(e);
+                art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+                placeholder.bringToFront();
+
+                // LIVE badge
+                TextView badge = text("LIVE", 10, WHITE);
+                badge.setTypeface(null, Typeface.BOLD);
+                badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+                badge.setBackground(rounded(RED, 4));
+                FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
+                bp.setMargins(dp(7), dp(7), 0, 0);
+                art.addView(badge, bp);
+
+                TextView titleText = text(e.name, 12, WHITE);
+                titleText.setTypeface(null, Typeface.BOLD);
+                titleText.setMaxLines(2);
+                titleText.setEllipsize(TextUtils.TruncateAt.END);
+                titleText.setPadding(dp(10), dp(6), dp(10), dp(8));
+                tile.addView(titleText);
+
+                LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tileWidth, tileHeight);
+                tileParams.setMargins(0, 0, dp(12), 0);
+                row.addView(tile, tileParams);
+
+                if (firstContentItem == null) firstContentItem = tile;
+
+                // Load thumbnail
+                art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight(), placeholder));
+            }
+        }
+
+        // If more items exist, add a "See All" tile at the end
+        if (items.size() > maxItems) {
+            LinearLayout moreTile = new LinearLayout(this);
+            moreTile.setOrientation(LinearLayout.VERTICAL);
+            moreTile.setBackground(rounded(0xff131a23, 8));
+            moreTile.setFocusable(true);
+            moreTile.setClickable(true);
+            moreTile.setTag(items);
+            moreTile.setId(View.generateViewId());
+            setFocusStyle(moreTile, 0xff131a23, 8);
+            moreTile.setOnClickListener(v -> {
+                ArrayList<Entry> allItems = (ArrayList<Entry>) v.getTag();
+                showAllGrid(title, allItems);
+            });
+
+            TextView moreText = text("See All\n" + items.size() + " channels", 14, WHITE);
+            moreText.setGravity(Gravity.CENTER);
+            moreText.setPadding(dp(10), 0, dp(10), 0);
+            moreTile.addView(moreText, new LinearLayout.LayoutParams(-1, -1, 1));
+
+            // Add icon
+            ImageView moreIcon = new ImageView(this);
+            moreIcon.setImageResource(R.drawable.ic_live_tv);
+            moreIcon.setColorFilter(iconColor);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+            iconParams.gravity = Gravity.CENTER;
+            iconParams.setMargins(0, dp(20), 0, dp(8));
+            moreTile.addView(moreIcon, iconParams);
+
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(tileWidth, tileHeight);
+            tileParams.setMargins(0, 0, dp(12), 0);
+            // Add to last row if space, otherwise new row
+            LinearLayout lastRow = (LinearLayout) gridContainer.getChildAt(gridContainer.getChildCount() - 1);
+            if (lastRow.getChildCount() < columns) {
+                lastRow.addView(moreTile, tileParams);
+            } else {
+                LinearLayout newRow = new LinearLayout(this);
+                newRow.setOrientation(LinearLayout.HORIZONTAL);
+                newRow.setGravity(Gravity.CENTER_HORIZONTAL);
+                LinearLayout.LayoutParams newRowParams = new LinearLayout.LayoutParams(-1, -2);
+                newRowParams.setMargins(0, 0, 0, dp(12));
+                gridContainer.addView(newRow, newRowParams);
+                newRow.addView(moreTile, tileParams);
+            }
+        }
+    }
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
     private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
@@ -1396,6 +1593,16 @@ public class MainActivity extends Activity {
                 TextView target = currentCategoryTab();
                 if (target != null) {
                     target.requestFocus();
+                    return true;
+                }
+            }
+            // Handle DPAD_CENTER/ENTER for clickable views in non-playing state (e.g., "See All" buttons)
+            if (!playing && (key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                    || key == android.view.KeyEvent.KEYCODE_ENTER
+                    || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                View focused = getCurrentFocus();
+                if (focused != null && focused.isClickable()) {
+                    focused.performClick();
                     return true;
                 }
             }
