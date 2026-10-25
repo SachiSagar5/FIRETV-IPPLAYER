@@ -1419,9 +1419,9 @@ public class MainActivity extends Activity {
                 v.setClipToOutline(true);
                 v.setElevation(dp(12));
             } else {
-                // Don't show white border for menu items (transparent background)
+                // Don't show white border for menu items or content cards - use transparent stroke
                 if (!isMenuItem) {
-                    bg.setStroke(dp(2), 0xFFFFFFFF);
+                    bg.setStroke(dp(1), 0xFF1A1A2E); // Subtle dark border matching divider color
                 } else {
                     bg.setStroke(dp(1), 0x00FFFFFF); // Transparent stroke
                 }
