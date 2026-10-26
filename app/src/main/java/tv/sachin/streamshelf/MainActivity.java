@@ -561,7 +561,6 @@ public class MainActivity extends Activity {
             
             // Create full-screen grid overlay
             final FrameLayout gridOverlay = new FrameLayout(this);
-            gridOverlayView = gridOverlay;
             gridOverlay.setBackgroundColor(0xFF05090F);
             gridOverlay.setAlpha(0f);
             
@@ -666,6 +665,10 @@ public class MainActivity extends Activity {
                 return false;
             });
             
+            // Only publish the overlay as "open" once it is the content view, so a
+            // failure while building it cannot leave Back pointing at a grid that
+            // was never shown.
+            gridOverlayView = gridOverlay;
             setContentView(gridOverlay);
             gridOverlay.animate().alpha(1f).setDuration(200).start();
             
