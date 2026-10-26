@@ -9,6 +9,25 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 APP_NAME="Gradle"
 APP_BASE_NAME=$(basename "$0")
 
+# Resolve the directory this script lives in. The rest of the script loads
+# org.gradle.wrapper.GradleWrapperMain from $APP_HOME/gradle/wrapper, and a
+# missing APP_HOME sent the classpath to /gradle/... → "Could not find or load
+# main class org.gradle.wrapper.GradleWrapperMain" on every CI run.
+# Symlinks are followed, because the wrapper is sometimes linked onto $PATH.
+app_path=$0
+while
+    APP_HOME=${app_path%"${app_path##*/}"}  # leaves a trailing /; empty if no leading path
+    [ -h "$app_path" ]
+do
+    ls_out=$( ls -ld "$app_path" )
+    link=${ls_out#*' -> '}
+    case $link in
+      /*) app_path=$link ;;
+      *)  app_path=$APP_HOME$link ;;
+    esac
+done
+APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD="maximum"
 
