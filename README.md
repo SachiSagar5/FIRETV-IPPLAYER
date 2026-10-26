@@ -5,19 +5,21 @@
 ![StreamShelf home screen UI preview](docs/streamshelf-ui-preview.png)
 
 
-A native Android TV IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback. Artwork loads off the UI thread into memory and disk caches, and shelves add more items in small batches so large playlists appear faster. Version 1.4.1 fixes a startup crash in the featured home-screen panel.
+A native Android TV IPTV player for Fire TV. It accepts multiple M3U playlist URLs, keeps their names and URLs encrypted with Android Keystore on the device, parses standard `#EXTINF` items and common `group-title` / `tvg-logo` attributes, and provides Live, Movies, and Series shelves with ExoPlayer playback. Artwork loads off the UI thread into memory and disk caches, and shelves add more items in small batches so large playlists appear faster.
+
+Series are grouped by show: the playlist's one-entry-per-episode listings collapse into a single card per show ("36 episodes"), and opening that card lists the episodes in season/episode order. Playback progress is saved as you watch, so reopening a movie or episode resumes where it stopped, and a show's card remembers the episode you were on ("RESUME S01E05").
 
 ## Compatibility
 
 - Fire OS 7 / Android 9 and newer (minSdk 24; tested target device family: Fire TV)
 - Android Studio is not needed on your Mac to build this project: GitHub Actions can build it on an Ubuntu runner.
-- First version focuses on groups and playback. XMLTV EPG, richer series season/episode grouping, poster artwork loading, favorites, and resume support are not included yet.
+- XMLTV EPG, subtitle tracks beyond the built-in menu, and Play Store distribution are not included yet.
 
 Classification uses group and item text: groups or titles mentioning movie/VOD/film go to Movies; series/season/episode/shows go to Series; other entries go to Live. M3U metadata is inconsistent, so some entries may need better classification rules for a particular provider. `tvg-logo` is parsed but the first UI version uses text tiles.
 
 ## Fire TV remote
 
-The home screen uses a full-screen dashboard with a left navigation rail, featured title, and horizontal Movies, Series, and Live TV shelves. Use the D-pad to navigate, **Select** to open a title, **Menu** to add or remove a focused title from My List, **Search** to search the active playlist, and **Back** to leave playback. The player handles remote play/pause keys, shows buffering and retry feedback, and pauses when StreamShelf goes into the background. The app includes an adaptive launcher icon and a dedicated Leanback banner for Fire TV. Entries without a valid `tvg-logo` keep a branded placeholder.
+The home screen uses a full-screen dashboard with a left navigation rail, featured title, and horizontal Movies, Series, and Live TV shelves. Use the D-pad to navigate, **Select** to open a title (a series card opens its episode list), **Menu** to add or remove the focused title — or every episode of the focused show — from My List, **Search** to search the active playlist, and **Back** to leave playback or close the episode/See All grid. Saved titles show a small heart on the card. The player handles remote play/pause keys, shows buffering and retry feedback, and pauses when StreamShelf goes into the background. The app includes an adaptive launcher icon and a dedicated Leanback banner for Fire TV. Entries without a valid `tvg-logo` keep a branded placeholder.
 
 ## Build APK remotely with GitHub Actions
 

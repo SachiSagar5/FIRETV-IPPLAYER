@@ -7,15 +7,40 @@ android {
         applicationId 'tv.sachin.streamshelf'
         minSdk 24
         targetSdk 34
-        versionCode 12
-        versionName '1.4.5'
+        // 13 / 1.5.0: series grouped into shows with an episode list, resume
+        // from saved progress, My List from the remote's option button.
+        versionCode 13
+        versionName '1.5.0'
+    }
+
+    /**
+     * One signing key for every build, checked into the repo.
+     *
+     * A debug build normally gets a keystore generated on whichever machine
+     * built it, so every CI run produces an APK with a different signature and
+     * `adb install -r` fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE. The only
+     * way to update then is to uninstall first — which wipes the saved
+     * playlists, My List and watch progress. This is a personal sideloaded app
+     * with nothing to protect here, so a shared key is the practical choice: an
+     * update keeps the user's data.
+     */
+    signingConfigs {
+        shared {
+            storeFile file('../keystore/streamshelf-debug.jks')
+            storePassword 'streamshelf'
+            keyAlias 'streamshelf'
+            keyPassword 'streamshelf'
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.shared
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.shared
         }
     }
 }

@@ -70,11 +70,13 @@ public class MainActivity extends Activity {
         new ThreadPoolExecutor.DiscardOldestPolicy()
     );
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private View previousHomeFocus; private boolean playing=false;
+    private long pendingResumeMs = 0;
     // See All grid focus state. The grid is a full-screen replacement content
     // view, so it needs its own focus anchor: the home screen's firstContentItem
     // points at a view that is detached while the grid is open, and focusing a
     // detached view silently fails.
     private FrameLayout gridOverlayView; private View gridBackButton; private View firstGridItem; private View previousHomeFirstContent;
+    private int gridFocusIndex;
     private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton, browseBtn;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
     private final AtomicInteger playlistRequestId=new AtomicInteger();
@@ -214,6 +216,8 @@ public class MainActivity extends Activity {
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
     private void refreshRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
+        // Series are grouped by show, not listed episode by episode.
+        if(category.equals("Series")){renderSeriesCategory();wireMainFocus();animateContentIn();return;}
         ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries){if(category.equals("My List")?isFavorite(e):e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);}
         // Sort Live TV: Kannada channels first
         if (category.equals("Live TV")) {
@@ -287,6 +291,352 @@ public class MainActivity extends Activity {
             addShelfTiles(hsv, row, groups.get(group), 0, portrait);
         }
         wireMainFocus();animateContentIn();}
+    // ==================== SERIES GROUPING ====================
+    // Providers publish one M3U entry per episode. Listing them individually
+    // turns a 10-show playlist into hundreds of near-identical "Show S01E07"
+    // cards. These helpers collapse episodes into a single show, order them, and
+    // remember the episode that was being watched so a card can resume there.
+
+    private static final java.util.regex.Pattern EP_SXXEXX =
+            java.util.regex.Pattern.compile("(?i)\\bS(\\d{1,2})\\s*[._-]?\\s*E(\\d{1,3})\\b");
+    private static final java.util.regex.Pattern EP_NXNN =
+            java.util.regex.Pattern.compile("(?i)\\b(\\d{1,2})\\s*x\\s*(\\d{2,3})\\b");
+    private static final java.util.regex.Pattern EP_SEASON_EP =
+            java.util.regex.Pattern.compile("(?i)\\bseason\\s*(\\d{1,2})\\s*(?:episode|ep)\\s*(\\d{1,3})\\b");
+    private static final java.util.regex.Pattern EP_ONLY =
+            java.util.regex.Pattern.compile("(?i)\\b(?:episode|ep)\\s*(\\d{1,3})\\b");
+
+    private static class Episode {
+        final Entry entry;
+        final int season;
+        final int episode;
+        Episode(Entry entry, int season, int episode) {
+            this.entry = entry;
+            this.season = season;
+            this.episode = episode;
+        }
+    }
+
+    private ArrayList<Series> seriesIndexCache;
+    private int seriesIndexCacheSize = -1;
+
+    private static class Series {
+        final String name;
+        String group = "";
+        String logo = "";
+        final ArrayList<Episode> episodes = new ArrayList<>();
+        Series(String name) { this.name = name; }
+    }
+
+    /** {season, episode, matchStart} for a title, or null when it carries none. */
+    private int[] episodeMarkers(String title) {
+        java.util.regex.Matcher m;
+        if ((m = EP_SXXEXX.matcher(title)).find())
+            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), m.start()};
+        if ((m = EP_NXNN.matcher(title)).find())
+            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), m.start()};
+        if ((m = EP_SEASON_EP.matcher(title)).find())
+            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), m.start()};
+        if ((m = EP_ONLY.matcher(title)).find())
+            return new int[]{0, Integer.parseInt(m.group(1)), m.start()};
+        return null;
+    }
+
+    /** "Breaking Bad S01E02 1080p" -> "Breaking Bad". */
+    private String seriesName(String title, int markerStart) {
+        String cut = title.substring(0, markerStart)
+                .replaceAll("[\\s\\-\u2013\u2014|:_.]+$", "")
+                .trim();
+        return cut.isEmpty() ? title : cut;
+    }
+
+    private String episodeLabel(Episode ep) {
+        if (ep.season > 0 && ep.episode > 0)
+            return String.format(java.util.Locale.ROOT, "S%02dE%02d", ep.season, ep.episode);
+        if (ep.episode > 0)
+            return String.format(java.util.Locale.ROOT, "E%02d", ep.episode);
+        return "EP";
+    }
+
+    /**
+     * Grouped shows, cached until the playlist changes. Home is rebuilt on every
+     * My List toggle, and re-parsing a few thousand titles each time is wasted
+     * main-thread work on a TV box.
+     */
+    private ArrayList<Series> seriesIndex() {
+        if (seriesIndexCache == null || seriesIndexCacheSize != entries.size()) {
+            seriesIndexCache = buildSeriesIndex();
+            seriesIndexCacheSize = entries.size();
+        }
+        return seriesIndexCache;
+    }
+
+    /** Every show in the playlist, episodes ordered by season and episode. */
+    private ArrayList<Series> buildSeriesIndex() {
+        LinkedHashMap<String, Series> byName = new LinkedHashMap<>();
+        for (Entry e : entries) {
+            if (!"Series".equals(e.type)) continue;
+            int[] markers = episodeMarkers(e.name);
+            String show = markers == null ? e.name : seriesName(e.name, markers[2]);
+            String key = show.toLowerCase(java.util.Locale.ROOT).trim();
+            Series series = byName.get(key);
+            if (series == null) {
+                series = new Series(show);
+                byName.put(key, series);
+            }
+            series.episodes.add(new Episode(e,
+                    markers == null ? 0 : markers[0],
+                    markers == null ? 0 : markers[1]));
+            if (series.group.isEmpty() && e.group != null) series.group = e.group;
+            if (series.logo.isEmpty() && e.logo != null && !e.logo.isEmpty()) series.logo = e.logo;
+        }
+        for (Series series : byName.values()) {
+            series.episodes.sort((a, b) -> {
+                if (a.season != b.season) return Integer.compare(a.season, b.season);
+                if (a.episode != b.episode) return Integer.compare(a.episode, b.episode);
+                return a.entry.name.compareToIgnoreCase(b.entry.name);
+            });
+        }
+        return new ArrayList<>(byName.values());
+    }
+
+    /**
+     * Where to pick up a show: the most recently watched unfinished episode, or
+     * the first episode when nothing has been watched yet.
+     */
+    private Episode resumeEpisode(Series series) {
+        Episode lastWatched = null;
+        long lastStamp = -1;
+        for (Episode ep : series.episodes) {
+            JSONObject progress = getPlaybackProgress(ep.entry);
+            if (progress == null || progress.optBoolean("completed")) continue;
+            long stamp = progress.optLong("timestamp", 0);
+            if (stamp > lastStamp) {
+                lastStamp = stamp;
+                lastWatched = ep;
+            }
+        }
+        if (lastWatched != null) return lastWatched;
+        return series.episodes.isEmpty() ? null : series.episodes.get(0);
+    }
+
+    /** Open a show: its episodes as cards, focused on the resume episode. */
+    private void openSeries(Series series) {
+        ArrayList<Entry> episodes = new ArrayList<>();
+        for (Episode ep : series.episodes) episodes.add(ep.entry);
+        if (episodes.isEmpty()) return;
+        Episode resume = resumeEpisode(series);
+        int focusIndex = 0;
+        if (resume != null) {
+            for (int i = 0; i < episodes.size(); i++) {
+                if (episodes.get(i) == resume.entry) { focusIndex = i; break; }
+            }
+        }
+        showAllGrid(series.name, episodes, focusIndex);
+    }
+
+    private void addSeriesTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Series> shows, int start) {
+        int batchSize = start == 0 ? 8 : 12;
+        int end = Math.min(start + batchSize, shows.size());
+        int width = dp(146), artHeight = dp(184);
+        for (int i = start; i < end; i++) {
+            Series series = shows.get(i);
+            Episode resume = resumeEpisode(series);
+
+            LinearLayout tile = new LinearLayout(this);
+            tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setBackground(rounded(PANEL, 9));
+            tile.setClipChildren(false);
+            tile.setFocusable(true);
+            tile.setClickable(true);
+            tile.setTag(series);
+            tile.setId(View.generateViewId());
+            setFocusStyle(tile, PANEL, 9);
+            tile.setOnClickListener(v -> openSeries(series));
+            if (firstContentItem == null) firstContentItem = tile;
+
+            FrameLayout art = new FrameLayout(this);
+            art.setBackground(rounded(0xff17191e, 8));
+            art.setClipToOutline(true);
+            LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(-1, artHeight);
+            artParams.setMargins(dp(5), dp(5), dp(5), dp(4));
+            tile.addView(art, artParams);
+
+            TextView placeholder = text("", 32, WHITE);
+            styleArtworkPlaceholder(placeholder, series.episodes.get(0).entry);
+            art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+
+            ImageView image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setAdjustViewBounds(false);
+            image.setContentDescription(series.name + " artwork");
+            image.setTag(resume != null ? resume.entry : series.episodes.get(0).entry);
+            art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+            placeholder.bringToFront();
+
+            // Episode count, or the episode a remote should resume from.
+            String badgeText = resume != null && getPlaybackProgress(resume.entry) != null
+                    ? "RESUME " + episodeLabel(resume)
+                    : series.episodes.size() + (series.episodes.size() == 1 ? " EPISODE" : " EPISODES");
+            TextView badge = text(badgeText, 10, WHITE);
+            badge.setTypeface(null, Typeface.BOLD);
+            badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+            badge.setBackground(rounded(0xE0000000, 4));
+            FrameLayout.LayoutParams badgeParams =
+                    new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
+            badgeParams.setMargins(dp(7), dp(7), 0, 0);
+            art.addView(badge, badgeParams);
+
+            addFavoriteBadge(art, resume != null ? resume.entry : series.episodes.get(0).entry);
+
+            TextView title = text(series.name, 14, WHITE);
+            title.setTypeface(null, Typeface.BOLD);
+            title.setMaxLines(2);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            title.setPadding(dp(10), dp(4), dp(10), dp(8));
+            tile.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(width, dp(224));
+            tileParams.setMargins(0, 0, dp(12), dp(8));
+            row.addView(tile, tileParams);
+        }
+        if (end < shows.size()) {
+            LinearLayout more = new LinearLayout(this);
+            more.setGravity(Gravity.CENTER);
+            more.setOrientation(LinearLayout.VERTICAL);
+            more.setBackground(rounded(0xff292b31, 9));
+            more.setFocusable(true);
+            more.setClickable(true);
+            setFocusStyle(more, 0xff292b31, 9);
+            TextView arrow = text("\u203a", 42, RED);
+            arrow.setGravity(Gravity.CENTER);
+            more.addView(arrow);
+            TextView label = text("LOAD MORE", 12, WHITE);
+            label.setTypeface(null, Typeface.BOLD);
+            label.setGravity(Gravity.CENTER);
+            more.addView(label);
+            more.setOnClickListener(v -> {
+                row.removeView(more);
+                int firstAdded = row.getChildCount();
+                addSeriesTiles(hsv, row, shows, end);
+                if (firstAdded < row.getChildCount()) row.getChildAt(firstAdded).requestFocus();
+            });
+            LinearLayout.LayoutParams moreParams = new LinearLayout.LayoutParams(width, dp(224));
+            moreParams.setMargins(0, 0, dp(12), dp(8));
+            row.addView(more, moreParams);
+        }
+        hsv.postDelayed(() -> loadVisibleThumbnails(hsv), 100);
+    }
+
+    /** Home shelf: one card per show instead of one per episode. */
+    private void appendSeriesShelf() {
+        ArrayList<Series> shows = seriesIndex();
+        if (shows.isEmpty()) return;
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(0, dp(8), 0, dp(4));
+
+        ImageView iconView = new ImageView(this);
+        iconView.setImageResource(R.drawable.ic_series);
+        iconView.setColorFilter(0xFF9C27B0);
+        iconView.setPadding(0, 0, dp(8), 0);
+        iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
+        heading.addView(iconView);
+
+        TextView name = text("Series  \u203a", 20, WHITE);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+
+        TextView count = text(shows.size() == 1 ? "1 show" : shows.size() + " shows", 13, 0xFF888888);
+        count.setPadding(0, 0, dp(12), 0);
+        heading.addView(count);
+
+        TextView seeAll = text("See All  \u203a", 13, 0xffc7cad1);
+        seeAll.setFocusable(true);
+        seeAll.setClickable(true);
+        seeAll.setGravity(Gravity.CENTER);
+        seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+        seeAll.setOnClickListener(v -> {
+            category = "Series";
+            updateCategoryTabs();
+            refreshRows();
+            focusFirstContent();
+        });
+        heading.addView(seeAll);
+
+        content.addView(heading);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1A1A2E);
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(4), 0, dp(8));
+        content.addView(divider);
+
+        HorizontalScrollView hsv = createShelfScroll();
+        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+        content.addView(hsv);
+        shelfRows.add(hsv);
+        addSeriesTiles(hsv, row, shows, 0);
+    }
+
+    /** Series tab: shows grouped under their provider group, one card per show. */
+    private void renderSeriesCategory() {
+        ArrayList<Series> shows = seriesIndex();
+        if (shows.isEmpty()) {
+            TextView empty = text(entries.isEmpty()
+                    ? "Loading your playlist\u2026"
+                    : "No series found in this playlist.", 20, MUTED);
+            empty.setPadding(0, dp(22), 0, 0);
+            empty.setFocusable(true);
+            empty.setId(View.generateViewId());
+            content.addView(empty);
+            firstContentItem = empty;
+            return;
+        }
+
+        LinkedHashMap<String, ArrayList<Series>> groups = new LinkedHashMap<>();
+        for (Series series : shows) {
+            String group = series.group == null || series.group.isEmpty() ? "All Series" : series.group;
+            groups.computeIfAbsent(group, k -> new ArrayList<>()).add(series);
+        }
+
+        for (String group : groups.keySet()) {
+            LinearLayout heading = new LinearLayout(this);
+            heading.setGravity(Gravity.CENTER_VERTICAL);
+            heading.setPadding(0, dp(8), 0, dp(4));
+
+            ImageView iconView = new ImageView(this);
+            iconView.setImageResource(R.drawable.ic_series);
+            iconView.setColorFilter(0xFF9C27B0);
+            iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
+            heading.addView(iconView);
+
+            TextView name = text(group + "  \u203a", 20, WHITE);
+            name.setTypeface(null, Typeface.BOLD);
+            heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+
+            TextView count = text(groups.get(group).size() == 1 ? "1 show" : groups.get(group).size() + " shows", 13, 0xFF888888);
+            count.setPadding(0, 0, dp(12), 0);
+            heading.addView(count);
+
+            content.addView(heading);
+
+            View divider = new View(this);
+            divider.setBackgroundColor(0xFF1A1A2E);
+            LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+            divParams.setMargins(0, dp(4), 0, dp(8));
+            content.addView(divider);
+
+            HorizontalScrollView hsv = createShelfScroll();
+            LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+            content.addView(hsv);
+            shelfRows.add(hsv);
+            addSeriesTiles(hsv, row, groups.get(group), 0);
+        }
+    }
+
     private void renderHome(){
         Entry hero = featuredEntry();
         content.addView(buildHero(hero));
@@ -295,7 +645,7 @@ public class MainActivity extends Activity {
         addContinueWatchingRow();
         
         appendHomeShelf("Movies","Movies",false);
-        appendHomeShelf("Series","Series",false);
+        appendSeriesShelf();
         appendHomeGrid("Live TV","Live"); // Live TV as card grid
         if(entries.isEmpty()){TextView empty=text("Loading your playlist…",16,MUTED);empty.setPadding(dp(4),dp(12),0,dp(10));content.addView(empty);}
     }
@@ -527,8 +877,17 @@ public class MainActivity extends Activity {
     private String gridTitle;
 
     private void showAllGrid(String title, ArrayList<Entry> items) {
+        showAllGrid(title, items, 0);
+    }
+
+    /**
+     * @param focusIndex item to focus once the overlay is up — a show opens on
+     *                   the episode being watched rather than on season one.
+     */
+    private void showAllGrid(String title, ArrayList<Entry> items, int focusIndex) {
         try {
             if (items == null || items.isEmpty()) return;
+            gridFocusIndex = Math.max(0, focusIndex);
 
             // The grid replaces the whole content view, so keep the home screen's
             // focus anchor to restore on close and start with none of our own.
@@ -674,10 +1033,22 @@ public class MainActivity extends Activity {
             
             // Focus first item
             gridOverlay.post(() -> {
+                // The requested item may sit on a page that has not been built
+                // yet (a 30-episode show), so pull pages until it exists.
+                while (gridFocusIndex > 0 && gridFocusIndex >= activeGridViewHolders.size()
+                        && currentGridPage * ITEMS_PER_PAGE < allGridItems.size()) {
+                    loadNextGridPage();
+                }
+                View target = null;
+                if (gridFocusIndex > 0 && gridFocusIndex < activeGridViewHolders.size()) {
+                    target = activeGridViewHolders.get(gridFocusIndex).tile;
+                } else if (firstGridItem != null) {
+                    target = firstGridItem;
+                }
                 // Never leave the screen without focus: a D-pad key with no
                 // focused view is swallowed by dispatchKeyEvent, which is the
                 // "remote does nothing" report.
-                if (firstGridItem != null) firstGridItem.requestFocus();
+                if (target != null) target.requestFocus();
                 if (getCurrentFocus() == null) backBtn.requestFocus();
             });
             
@@ -747,6 +1118,7 @@ public class MainActivity extends Activity {
                     holder.art.removeView(holder.liveBadge);
                     holder.liveBadge = null;
                 }
+                addFavoriteBadge(holder.art, e);
                 if (e.type.equals("Live")) {
                     TextView badge = text("LIVE", 10, WHITE);
                     badge.setTypeface(null, Typeface.BOLD);
@@ -825,6 +1197,7 @@ public class MainActivity extends Activity {
             image.setTag(e);
             art.addView(image, new FrameLayout.LayoutParams(-1, -1));
             placeholder.bringToFront();
+            addFavoriteBadge(art, e);
             art.post(() -> loadThumbnail(image, e.logo, art.getWidth(), art.getHeight(), placeholder));
             
             // Progress bar overlay
@@ -1285,8 +1658,102 @@ public class MainActivity extends Activity {
         }
     }
     private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
-    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
+    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=live?dp(104):dp(118),height=live?dp(68):dp(70);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();addFavoriteBadge(art,e);TextView titleText=text(e.name,12,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(96));tileParams.setMargins(0,0,dp(8),dp(7));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(95),dp(96)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
+    private static final String FAVORITE_BADGE = "favorite-badge";
+
+    /** The Entry behind the focused view, walking through its card container. */
+    private Entry focusedEntry() {
+        View view = getCurrentFocus();
+        while (view != null) {
+            Object tag = view.getTag();
+            if (tag instanceof Entry) return (Entry) tag;
+            android.view.ViewParent parent = view.getParent();
+            view = parent instanceof View ? (View) parent : null;
+        }
+        return null;
+    }
+
+    /** The Series behind the focused view, walking through its card container. */
+    private Series focusedSeries() {
+        View view = getCurrentFocus();
+        while (view != null) {
+            Object tag = view.getTag();
+            if (tag instanceof Series) return (Series) tag;
+            android.view.ViewParent parent = view.getParent();
+            view = parent instanceof View ? (View) parent : null;
+        }
+        return null;
+    }
+
+    /**
+     * My List is entry-based, so saving a show means saving its episodes. Doing
+     * that as one action keeps the card's single "option" press meaningful.
+     */
+    private void toggleSeriesFavorite(Series series) {
+        if (series == null || series.episodes.isEmpty()) return;
+        boolean anySaved = false;
+        for (Episode ep : series.episodes) {
+            try {
+                if (favoriteKeys.contains(sha256(ep.entry.url))) { anySaved = true; break; }
+            } catch (Exception ignored) {}
+        }
+        boolean add = !anySaved;
+        int changed = 0;
+        for (Episode ep : series.episodes) {
+            try {
+                String key = sha256(ep.entry.url);
+                if (add) {
+                    if (favoriteKeys.add(key)) changed++;
+                } else {
+                    if (favoriteKeys.remove(key)) changed++;
+                }
+            } catch (Exception ignored) {}
+        }
+        getPreferences(0).edit().putStringSet("favorites", new HashSet<>(favoriteKeys)).apply();
+        String noun = changed == 1 ? "episode" : "episodes";
+        Toast.makeText(this, add
+                ? "Added " + changed + " " + noun + " to My List"
+                : "Removed " + changed + " " + noun + " from My List",
+                Toast.LENGTH_SHORT).show();
+        View focused = getCurrentFocus();
+        if (focused != null) {
+            Episode resume = resumeEpisode(series);
+            refreshFocusedFavoriteBadge(resume != null ? resume.entry : series.episodes.get(0).entry);
+        }
+        if (category.equals("My List") || category.equals("Home") || category.equals("Series")) {
+            refreshRows();
+            focusFirstContent();
+        }
+    }
+
+    /** Small heart on the artwork so "saved to My List" is visible on the card. */
+    private void addFavoriteBadge(FrameLayout art, Entry entry) {
+        if (art == null || entry == null || !isFavorite(entry)) return;
+        TextView heart = text("\u2665", 13, 0xFFFF5A78);
+        heart.setTag(FAVORITE_BADGE);
+        heart.setPadding(dp(6), dp(1), dp(6), dp(2));
+        heart.setBackground(rounded(0xCC000000, 6));
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.RIGHT);
+        params.setMargins(0, dp(7), dp(7), 0);
+        art.addView(heart, params);
+    }
+
+    /** Re-draw the heart on the focused card after a My List toggle. */
+    private void refreshFocusedFavoriteBadge(Entry entry) {
+        View focused = getCurrentFocus();
+        if (!(focused instanceof LinearLayout)) return;
+        LinearLayout tile = (LinearLayout) focused;
+        if (tile.getChildCount() == 0) return;
+        View first = tile.getChildAt(0);
+        if (!(first instanceof FrameLayout)) return;
+        FrameLayout art = (FrameLayout) first;
+        for (int i = art.getChildCount() - 1; i >= 0; i--) {
+            if (FAVORITE_BADGE.equals(art.getChildAt(i).getTag())) art.removeViewAt(i);
+        }
+        addFavoriteBadge(art, entry);
+    }
+
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
         int batchSize=start==0?8:12;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(146):dp(216),artHeight=portrait?dp(184):dp(104);
@@ -1298,6 +1765,7 @@ public class MainActivity extends Activity {
             ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
             placeholder.bringToFront();
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
+            addFavoriteBadge(art,e);
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(224):dp(150));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
         }
@@ -1480,7 +1948,10 @@ public class MainActivity extends Activity {
     }
     private void focusFirstContent(){
         if (gridOverlayView != null) {
-            if (firstGridItem != null) firstGridItem.requestFocus();
+            // Only step in when nothing is focused. Toggling My List refreshes
+            // the hidden home screen and calls this; jumping back to the first
+            // tile made the remote appear to lose the item that was just saved.
+            if (getCurrentFocus() == null && firstGridItem != null) firstGridItem.requestFocus();
             return;
         }
         content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});
@@ -1616,11 +2087,20 @@ public class MainActivity extends Activity {
                 searchDialog();
                 return true;
             }
-            if (!playing && key == android.view.KeyEvent.KEYCODE_MENU) {
-                View focused = getCurrentFocus();
-                Object tag = focused == null ? null : focused.getTag();
-                if (tag instanceof Entry) {
-                    toggleFavorite((Entry) tag);
+            if (!playing && (key == android.view.KeyEvent.KEYCODE_MENU
+                    || key == android.view.KeyEvent.KEYCODE_INFO)) {
+                // Only the card itself carries the tag, and the remote can land
+                // focus on any child view of it, so walk outwards instead of
+                // reading one level. Getting this wrong sent every other press
+                // to the playlist dialog instead of saving the title.
+                Series series = focusedSeries();
+                if (series != null) {
+                    toggleSeriesFavorite(series);
+                    return true;
+                }
+                Entry entry = focusedEntry();
+                if (entry != null) {
+                    toggleFavorite(entry);
                     return true;
                 }
                 sourceDialog();
@@ -1763,7 +2243,7 @@ public class MainActivity extends Activity {
             }
         }
     }
-    private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});});}
+    private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);seriesIndexCache=null;seriesIndexCacheSize=-1;status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});});}
     private String afterComma(String s){int i=s.indexOf(',');String v=i>=0?s.substring(i+1).trim():"Untitled";return v.isEmpty()?"Untitled":v;}
     private String attr(String s,java.util.regex.Pattern pattern){java.util.regex.Matcher m=pattern.matcher(s);return m.find()?m.group(1):"";}
     private String classify(String g,String n){String s=(g+" "+n).toLowerCase(Locale.ROOT);if(SERIES_HINT.matcher(s).find())return "Series";if(MOVIE_HINT.matcher(s).find())return "Movies";return "Live";}
@@ -1799,6 +2279,7 @@ public class MainActivity extends Activity {
         try {
             previousHomeFocus = getCurrentFocus();
             currentEntry = e;
+            pendingResumeMs = resumePositionFor(e);
             playerOverlay = new FrameLayout(this);
             playerOverlay.setBackgroundColor(Color.BLACK);
             playerOverlay.setAlpha(0f);
@@ -2246,7 +2727,9 @@ public class MainActivity extends Activity {
                 focusedControlIndex = indexOfControl(v);
                 // Bring to front for proper layering
                 v.bringToFront();
-                ((ViewGroup) v.getParent()).invalidate();
+                if (v.getParent() instanceof View) {
+                    ((View) v.getParent()).invalidate();
+                }
             } else {
                 v.animate().cancel();
                 v.animate()
@@ -2268,8 +2751,15 @@ public class MainActivity extends Activity {
     }
 
     private int indexOfControl(View v) {
-        for (int i = 0; i < controlOrder.length; i++) {
-            if (controlOrder[i] == v) return i;
+        // `controlOrder` only exists while the player UI is built, but this
+        // listener is also attached to the See All grid's Back button. When the
+        // grid tears down and a focused tile is made non-focusable, Android
+        // moves focus to that Back button mid-teardown — which ran this method
+        // with controlOrder == null and killed the app (reported on Fire TV).
+        if (controlOrder != null) {
+            for (int i = 0; i < controlOrder.length; i++) {
+                if (controlOrder[i] == v) return i;
+            }
         }
         // Check other focusable views
         if (v == backBtn) return -1;
@@ -2561,6 +3051,16 @@ public class MainActivity extends Activity {
                             } else if (state == Player.STATE_READY) {
                                 playerLoadingPanel.setVisibility(View.GONE);
                                 playerErrorPanel.setVisibility(View.GONE);
+                                // Resume an unfinished movie/episode. Position is
+                                // only meaningful once the timeline is known.
+                                if (pendingResumeMs > 0 && player != null) {
+                                    long resumeTarget = pendingResumeMs;
+                                    pendingResumeMs = 0;
+                                    player.seekTo(resumeTarget);
+                                    Toast.makeText(MainActivity.this,
+                                            "Resuming from " + formatTime(resumeTarget),
+                                            Toast.LENGTH_SHORT).show();
+                                }
                                 long durationMs = player.getDuration();
                                 if (metadataText != null && durationMs > 0 && durationMs != Long.MAX_VALUE) {
                                     metadataText.setText(buildMetadataString() + " · " + formatRuntime(durationMs));
@@ -2675,6 +3175,22 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Milliseconds to resume from, or 0 to start over.
+     *
+     * Mirrors saveCurrentPlaybackPosition's thresholds: anything under 30s in,
+     * or within a minute of the end, counts as "start over" rather than resume.
+     */
+    private long resumePositionFor(Entry entry) {
+        JSONObject saved = getPlaybackProgress(entry);
+        if (saved == null || saved.optBoolean("completed")) return 0;
+        long position = saved.optLong("position", 0);
+        long duration = saved.optLong("duration", 0);
+        if (position < 30000) return 0;
+        if (duration > 0 && position > duration - 60000) return 0;
+        return position;
+    }
+
     private JSONObject getPlaybackProgress(Entry entry) {
         if (entry == null) return null;
         try {
@@ -2759,7 +3275,7 @@ public class MainActivity extends Activity {
 
     private void loadFavorites(){Set<String> saved=getPreferences(0).getStringSet("favorites",Collections.emptySet());favoriteKeys.addAll(saved);}
     private boolean isFavorite(Entry e){try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}}
-    private void toggleFavorite(Entry e){try{String key=sha256(e.url);if(favoriteKeys.contains(key)){favoriteKeys.remove(key);Toast.makeText(this,"Removed from My List",Toast.LENGTH_SHORT).show();}else{favoriteKeys.add(key);Toast.makeText(this,"Added to My List",Toast.LENGTH_SHORT).show();}getPreferences(0).edit().putStringSet("favorites",new HashSet<>(favoriteKeys)).apply();if(category.equals("My List")||category.equals("Home")){refreshRows();focusFirstContent();}}catch(Exception ignored){Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();}}
+    private void toggleFavorite(Entry e){try{String key=sha256(e.url);if(favoriteKeys.contains(key)){favoriteKeys.remove(key);Toast.makeText(this,"Removed from My List",Toast.LENGTH_SHORT).show();}else{favoriteKeys.add(key);Toast.makeText(this,"Added to My List",Toast.LENGTH_SHORT).show();}getPreferences(0).edit().putStringSet("favorites",new HashSet<>(favoriteKeys)).apply();if(gridOverlayView!=null)refreshFocusedFavoriteBadge(e);if(category.equals("My List")||category.equals("Home")){refreshRows();focusFirstContent();}}catch(Exception ignored){Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();}}
     private void loadSources(){try{String raw=getPreferences(0).getString("sources_enc",null);if(raw==null)return;byte[] all=Base64.decode(raw,Base64.NO_WRAP);int n=((all[0]&255)<<8)|(all[1]&255);byte[] iv=Arrays.copyOfRange(all,2,2+n),cipher=Arrays.copyOfRange(all,2+n,all.length);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,secretKey(),new GCMParameterSpec(128,iv));JSONArray a=new JSONArray(new String(c.doFinal(cipher),StandardCharsets.UTF_8));for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);sources.add(new Source(o.getString("name"),o.getString("url")));}activeSource=Math.min(getPreferences(0).getInt("active",0),Math.max(0,sources.size()-1));}catch(Exception ignored){sources.clear();}}
     private void saveSources(){try{JSONArray a=new JSONArray();for(Source s:sources){JSONObject o=new JSONObject();o.put("name",s.name);o.put("url",s.url);a.put(o);}Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,secretKey());byte[] iv=c.getIV(),data=c.doFinal(a.toString().getBytes(StandardCharsets.UTF_8));byte[] out=new byte[2+iv.length+data.length];out[0]=(byte)(iv.length>>8);out[1]=(byte)iv.length;System.arraycopy(iv,0,out,2,iv.length);System.arraycopy(data,0,out,2+iv.length,data.length);getPreferences(0).edit().putString("sources_enc",Base64.encodeToString(out,Base64.NO_WRAP)).putInt("active",activeSource).apply();}catch(Exception e){status.setText("Could not securely save playlist URLs.");}}
     private javax.crypto.SecretKey secretKey() throws Exception {KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);String alias="StreamShelfKey";if(ks.containsAlias(alias))return (javax.crypto.SecretKey)ks.getKey(alias,null);KeyGenerator g=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");g.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return g.generateKey();}
