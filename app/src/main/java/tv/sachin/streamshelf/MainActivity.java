@@ -70,6 +70,11 @@ public class MainActivity extends Activity {
         new ThreadPoolExecutor.DiscardOldestPolicy()
     );
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private View previousHomeFocus; private boolean playing=false;
+    // See All grid focus state. The grid is a full-screen replacement content
+    // view, so it needs its own focus anchor: the home screen's firstContentItem
+    // points at a view that is detached while the grid is open, and focusing a
+    // detached view silently fails.
+    private FrameLayout gridOverlayView; private View gridBackButton; private View firstGridItem; private View previousHomeFirstContent;
     private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton, browseBtn;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
     private final AtomicInteger playlistRequestId=new AtomicInteger();
@@ -428,7 +433,37 @@ public class MainActivity extends Activity {
         if (gridContainer != null) gridContainer.removeAllViews();
         gridContainer = null;
         gridScroll = null;
-        firstContentItem = null;
+        gridOverlayView = null;
+        gridBackButton = null;
+        firstGridItem = null;
+        // Hand the home screen its anchor back so its Left-to-nav shortcut and
+        // wireMainFocus() still hold after the overlay is dismissed. If refreshRows()
+        // rebuilt the home screen while the grid was open, its fresh anchor wins.
+        if (firstContentItem == null || firstContentItem.getParent() == null) {
+            firstContentItem = previousHomeFirstContent;
+        }
+        previousHomeFirstContent = null;
+    }
+
+    /** Dismiss the See All grid and restore the screen it was opened from. */
+    private void closeAllGrid() { closeAllGrid(null); }
+
+    private void closeAllGrid(Runnable afterClose) {
+        final FrameLayout overlay = gridOverlayView;
+        if (overlay == null) {
+            if (afterClose != null) afterClose.run();
+            return;
+        }
+        overlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
+            recycleGridViews(overlay);
+            setContentView(root);
+            if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
+                previousHomeFocus.requestFocus();
+            } else {
+                requestInitialFocus();
+            }
+            if (afterClose != null) afterClose.run();
+        }).start();
     }
 
     private GridItemViewHolder createGridItemViewHolder(int tileWidth, int tileHeight, int artHeight, Entry e) {
@@ -494,6 +529,11 @@ public class MainActivity extends Activity {
     private void showAllGrid(String title, ArrayList<Entry> items) {
         try {
             if (items == null || items.isEmpty()) return;
+
+            // The grid replaces the whole content view, so keep the home screen's
+            // focus anchor to restore on close and start with none of our own.
+            previousHomeFirstContent = firstContentItem;
+            firstGridItem = null;
             
             // Save current home state
             previousHomeFocus = getCurrentFocus();
@@ -520,7 +560,8 @@ public class MainActivity extends Activity {
             }
             
             // Create full-screen grid overlay
-            FrameLayout gridOverlay = new FrameLayout(this);
+            final FrameLayout gridOverlay = new FrameLayout(this);
+            gridOverlayView = gridOverlay;
             gridOverlay.setBackgroundColor(0xFF05090F);
             gridOverlay.setAlpha(0f);
             
@@ -543,18 +584,9 @@ public class MainActivity extends Activity {
             backBtn.setFocusable(true);
             backBtn.setClickable(true);
             backBtn.setContentDescription("Back");
-            backBtn.setOnClickListener(v -> {
-                gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                    recycleGridViews(gridOverlay);
-                    setContentView(root);
-                    if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
-                        previousHomeFocus.requestFocus();
-                    } else {
-                        requestInitialFocus();
-                    }
-                }).start();
-            });
+            backBtn.setOnClickListener(v -> closeAllGrid());
             setFocusStyleView(backBtn, dp(40));
+            gridBackButton = backBtn;
             topBar.addView(backBtn, new LinearLayout.LayoutParams(-2, -2));
             
             // Title
@@ -618,7 +650,8 @@ public class MainActivity extends Activity {
             // Handle focus navigation for grid
             gridScroll.setOnFocusChangeListener((v, focused) -> {
                 if (focused) {
-                    if (firstContentItem != null) firstContentItem.requestFocus();
+                    if (firstGridItem != null) firstGridItem.requestFocus();
+                    else if (gridBackButton != null) gridBackButton.requestFocus();
                 }
             });
             
@@ -626,19 +659,9 @@ public class MainActivity extends Activity {
             gridOverlay.setFocusableInTouchMode(true);
             gridOverlay.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
             gridOverlay.setOnKeyListener((v, keyCode, event) -> {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    if (keyCode == KeyEvent.KEYCODE_BACK) {
-                        gridOverlay.animate().alpha(0f).setDuration(200).withEndAction(() -> {
-                            recycleGridViews(gridOverlay);
-                            setContentView(root);
-                            if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
-                                previousHomeFocus.requestFocus();
-                            } else {
-                                requestInitialFocus();
-                            }
-                        }).start();
-                        return true;
-                    }
+                if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_BACK) {
+                    closeAllGrid();
+                    return true;
                 }
                 return false;
             });
@@ -648,8 +671,11 @@ public class MainActivity extends Activity {
             
             // Focus first item
             gridOverlay.post(() -> {
-                if (firstContentItem != null) firstContentItem.requestFocus();
-                else backBtn.requestFocus();
+                // Never leave the screen without focus: a D-pad key with no
+                // focused view is swallowed by dispatchKeyEvent, which is the
+                // "remote does nothing" report.
+                if (firstGridItem != null) firstGridItem.requestFocus();
+                if (getCurrentFocus() == null) backBtn.requestFocus();
             });
             
         } catch (Exception e) {
@@ -703,18 +729,7 @@ public class MainActivity extends Activity {
                 
                 holder.entry = e;
                 holder.tile.setTag(e);
-                holder.tile.setOnClickListener(v -> {
-                    gridScroll.animate().alpha(0f).setDuration(150).withEndAction(() -> {
-                        recycleGridViews((FrameLayout) gridScroll.getParent());
-                        setContentView(root);
-                        if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
-                            previousHomeFocus.requestFocus();
-                        } else {
-                            requestInitialFocus();
-                        }
-                        play(e);
-                    }).start();
-                });
+                holder.tile.setOnClickListener(v -> closeAllGrid(() -> play(e)));
                 
                 // Update content
                 holder.entry = e;
@@ -745,7 +760,7 @@ public class MainActivity extends Activity {
                 row.addView(holder.tile, tileParams);
                 
                 // Track first focusable item
-                if (firstContentItem == null) firstContentItem = holder.tile;
+                if (firstGridItem == null) firstGridItem = holder.tile;
             }
         }
         
@@ -1450,8 +1465,23 @@ public class MainActivity extends Activity {
         view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
     }
     private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(category.equals(String.valueOf(tab.getTag())))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
-    private void requestInitialFocus(){if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});}
-    private void focusFirstContent(){content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});}
+    private void requestInitialFocus(){
+        // On the See All grid there is no nav rail: the fallback has to land on
+        // the grid itself, or every D-pad key is swallowed with nothing focused.
+        if (gridOverlayView != null) {
+            View target = firstGridItem != null ? firstGridItem : gridBackButton;
+            if (target != null) target.requestFocus();
+            return;
+        }
+        if(nav==null)return;nav.post(()->{if(getCurrentFocus()==null){TextView target=currentCategoryTab();if(target!=null)target.requestFocus();}});
+    }
+    private void focusFirstContent(){
+        if (gridOverlayView != null) {
+            if (firstGridItem != null) firstGridItem.requestFocus();
+            return;
+        }
+        content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});
+    }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
             int key = event.getKeyCode();
@@ -1570,6 +1600,14 @@ public class MainActivity extends Activity {
                 return true;
             }
 
+            // BACK must dismiss the See All grid. The overlay's OnKeyListener
+            // only receives keys while the overlay itself is focused, which
+            // never happens with FOCUS_AFTER_DESCENDANTS, so Back fell through
+            // to super.onBackPressed() and closed the whole app instead.
+            if (!playing && key == android.view.KeyEvent.KEYCODE_BACK && gridOverlayView != null) {
+                closeAllGrid();
+                return true;
+            }
             // Non-playing keys (existing logic)
             if (!playing && key == android.view.KeyEvent.KEYCODE_SEARCH) {
                 searchDialog();
@@ -2707,6 +2745,10 @@ public class MainActivity extends Activity {
             bottomControls = null;
             progressBar = null;
             controlOrder = null;
+            return;
+        }
+        if (gridOverlayView != null) {
+            closeAllGrid();
             return;
         }
         super.onBackPressed();
