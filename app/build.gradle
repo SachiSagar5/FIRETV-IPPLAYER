@@ -13,8 +13,17 @@ android {
         // 17 / 1.6.1: HTTPS fallback so playlists with expired, self-signed or
         // incomplete provider certificates load instead of failing. Normal
         // platform validation is still tried first.
-        versionCode 17
-        versionName '1.6.1'
+        // 18 / 1.6.2: Smaller cards on TV and whole-card shelf scrolling so the
+        // first card is no longer cropped when switching sections.
+        // 19 / 1.6.3: Fire TV 1280x720 app tile, bundled Roboto, smaller group
+        // titles, and a lower player control bar that is fully remote-navigable.
+        // 20 / 1.6.4: Live TV Up/Down always changes channel while the video is
+        // focused, including when the controls are visible.
+        // 21 / 1.6.5: My List keeps a saved snapshot so titles survive playlist
+        // URL rotation, and the player's quality placeholder is replaced by
+        // working multi-track audio selection.
+        versionCode 21
+        versionName '1.6.5'
     }
 
     /**

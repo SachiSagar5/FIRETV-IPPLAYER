@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Roboto (Apache 2.0), bundled so the app looks the same on every Fire TV. -->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font
+        android:font="@font/roboto_regular"
+        android:fontStyle="normal"
+        android:fontWeight="400" />
+    <font
+        android:font="@font/roboto_medium"
+        android:fontStyle="normal"
+        android:fontWeight="500" />
+    <font
+        android:font="@font/roboto_bold"
+        android:fontStyle="normal"
+        android:fontWeight="700" />
+</font-family>

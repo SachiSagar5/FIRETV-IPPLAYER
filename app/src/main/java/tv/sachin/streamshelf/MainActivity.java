@@ -32,9 +32,14 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import androidx.core.content.ContextCompat;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
+import androidx.media3.common.Tracks;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
@@ -71,6 +76,15 @@ public class MainActivity extends Activity {
     private final ArrayList<Source> sources=new ArrayList<>();
     private final ArrayList<Entry> entries=new ArrayList<>();
     private final HashSet<String> favoriteKeys=new HashSet<>();
+    /**
+     * Snapshot of everything saved to My List, keyed by a stable identity.
+     * Favourite URLs are not dependable: IPTV providers rotate the token in the
+     * URL, and a title disappears from My List when the playlist no longer
+     * carries the exact URL it was saved with. The snapshot also lets the list
+     * render before (or without) the playlist finishing its download.
+     */
+    private final LinkedHashMap<String,Entry> favoriteEntries=new LinkedHashMap<>();
+    private static final String FAVORITES_JSON="favorites_json";
     private LinearLayout root, content, nav, sidebar, sidebarBrand; private ScrollView mainScroll; private TextView status, sourceLabel, brandWordmark, brandProduct; private TextView searchControl; private String category="Home"; private int activeSource=0; private boolean sidebarExpanded;
     private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
@@ -173,7 +187,7 @@ public class MainActivity extends Activity {
             try (FileWriter fw = new FileWriter(logFile)) {
                 fw.write("StreamShelf Crash Report\n");
                 fw.write("Time: " + new Date() + "\n");
-                fw.write("Version: 1.6.1\n");
+                fw.write("Version: 1.6.5\n");
                 fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
                 fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
                 fw.write("Playing: " + playing + "\n");
@@ -289,7 +303,7 @@ public class MainActivity extends Activity {
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
         sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
         sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",20,RED);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",17,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",17,RED);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
-        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
+        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();if(mainScroll!=null)mainScroll.scrollTo(0,0);refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->{setSidebarExpanded(isInsideView(newFocus,nav));scrollShelfToFocused(newFocus);scrollMainToFocused(newFocus);});
         setSidebarExpanded(false);
@@ -305,7 +319,12 @@ public class MainActivity extends Activity {
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
         // Series are grouped by show, not listed episode by episode.
         if(category.equals("Series")){renderSeriesCategory();wireMainFocus();animateContentIn();return;}
-        ArrayList<Entry> shown=new ArrayList<>();for(Entry e:entries){if(category.equals("My List")?isFavorite(e):e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);}
+        ArrayList<Entry> shown=new ArrayList<>();
+        if(category.equals("My List")){
+            shown.addAll(myListEntries());
+        }else{
+            for(Entry e:entries)if(e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);
+        }
         // Sort Live TV: Kannada channels first
         if (category.equals("Live TV")) {
             shown.sort((a, b) -> {
@@ -345,9 +364,9 @@ public class MainActivity extends Activity {
             iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
             heading.addView(iconView);
 
-            TextView name = text(group + "  ›", 20, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            TextView name = text(group + "  ›", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             name.setTypeface(null, Typeface.BOLD);
-            heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+            heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
 
             TextView count = text(groups.get(group).size() + " titles", 13, 0xFF888888);
             count.setPadding(0, 0, dp(12), 0);
@@ -635,9 +654,9 @@ public class MainActivity extends Activity {
         iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
         heading.addView(iconView);
 
-        TextView name = text("Series  \u203a", 20, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView name = text("Series  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setTypeface(null, Typeface.BOLD);
-        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
 
         TextView count = text(shows.size() == 1 ? "1 show" : shows.size() + " shows", 13, 0xFF888888);
         count.setPadding(0, 0, dp(12), 0);
@@ -710,9 +729,9 @@ public class MainActivity extends Activity {
             iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
             heading.addView(iconView);
 
-            TextView name = text(group + "  \u203a", 20, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            TextView name = text(group + "  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             name.setTypeface(null, Typeface.BOLD);
-            heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+            heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
 
             TextView count = text(groups.get(group).size() == 1 ? "1 show" : groups.get(group).size() + " shows", 13, 0xFF888888);
             count.setPadding(0, 0, dp(12), 0);
@@ -783,9 +802,9 @@ public class MainActivity extends Activity {
         
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
-        TextView name = text("Continue Watching  ›", 20, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView name = text("Continue Watching  ›", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setTypeface(null, Typeface.BOLD);
-        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
         TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
         seeAll.setFocusable(true);
         seeAll.setClickable(true);
@@ -1534,9 +1553,9 @@ public class MainActivity extends Activity {
         iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
         heading.addView(iconView);
 
-        TextView name = text(title + "  ›", 20, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView name = text(title + "  ›", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setTypeface(null, Typeface.BOLD);
-        heading.addView(name, new LinearLayout.LayoutParams(0, dp(36), 1));
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
 
         TextView count = text(shelf.size() + " titles", 13, 0xFF888888);
         count.setPadding(0, 0, dp(12), 0);
@@ -1582,10 +1601,10 @@ public class MainActivity extends Activity {
     private static final String FAVORITE_BADGE = "favorite-badge";
     // One shared landscape card size for every Home shelf (Movies, Series,
     // Continue Watching and Live TV) so the dashboard stays on a single grid.
-    private static final int CARD_W_DP = 160;
-    private static final int CARD_ART_H_DP = 90;
-    private static final int CARD_H_DP = 124;
-    private static final int CARD_GAP_DP = 12;
+    private static final int CARD_W_DP = 144;
+    private static final int CARD_ART_H_DP = 80;
+    private static final int CARD_H_DP = 114;
+    private static final int CARD_GAP_DP = 10;
 
     /** The Entry behind the focused view, walking through its card container. */
     private Entry focusedEntry() {
@@ -1619,23 +1638,14 @@ public class MainActivity extends Activity {
         if (series == null || series.episodes.isEmpty()) return;
         boolean anySaved = false;
         for (Episode ep : series.episodes) {
-            try {
-                if (favoriteKeys.contains(sha256(ep.entry.url))) { anySaved = true; break; }
-            } catch (Exception ignored) {}
+            if (isFavorite(ep.entry)) { anySaved = true; break; }
         }
         boolean add = !anySaved;
         int changed = 0;
         for (Episode ep : series.episodes) {
-            try {
-                String key = sha256(ep.entry.url);
-                if (add) {
-                    if (favoriteKeys.add(key)) changed++;
-                } else {
-                    if (favoriteKeys.remove(key)) changed++;
-                }
-            } catch (Exception ignored) {}
+            if (setFavorite(ep.entry, add, false)) changed++;
         }
-        getPreferences(0).edit().putStringSet("favorites", new HashSet<>(favoriteKeys)).apply();
+        if (changed > 0) saveFavorites();
         String noun = changed == 1 ? "episode" : "episodes";
         Toast.makeText(this, add
                 ? "Added " + changed + " " + noun + " to My List"
@@ -1687,7 +1697,7 @@ public class MainActivity extends Activity {
 
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
-        int batchSize=start==0?8:12;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(146):dp(216),artHeight=portrait?dp(184):dp(104);
+        int batchSize=start==0?8:12;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
         for(int i=start;i<end;i++){
             Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
             if(firstContentItem==null)firstContentItem=tile;
@@ -1698,12 +1708,12 @@ public class MainActivity extends Activity {
             if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
             addFavoriteBadge(art,e);
             TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(246):dp(166));p.setMargins(0,0,dp(12),dp(8));row.addView(tile,p);
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(222):dp(152));p.setMargins(0,0,dp(10),dp(8));row.addView(tile,p);
         }
         if(end<shelf.size()){
             LinearLayout more=new LinearLayout(this);more.setGravity(Gravity.CENTER);more.setOrientation(LinearLayout.VERTICAL);more.setBackground(rounded(0xff292b31,9));more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff292b31,9);
             TextView arrow=text("›",42,RED);arrow.setGravity(Gravity.CENTER);more.addView(arrow);TextView label=text("LOAD MORE",12,WHITE);label.setTypeface(null,Typeface.BOLD);label.setGravity(Gravity.CENTER);more.addView(label);
-            more.setOnClickListener(v->{row.removeView(more);int firstAdded=row.getChildCount();addShelfTiles(hsv,row,shelf,end,portrait);if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(width,portrait?dp(246):dp(166));mp.setMargins(0,0,dp(12),dp(8));row.addView(more,mp);
+            more.setOnClickListener(v->{row.removeView(more);int firstAdded=row.getChildCount();addShelfTiles(hsv,row,shelf,end,portrait);if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(width,portrait?dp(222):dp(152));mp.setMargins(0,0,dp(10),dp(8));row.addView(more,mp);
         }
         hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);
     }
@@ -2021,6 +2031,13 @@ public class MainActivity extends Activity {
                 if (shelfWidth <= 0 || targetWidth <= 0) return;
                 int desired = target.getLeft() - (shelfWidth - targetWidth) / 2;
                 int max = Math.max(0, row.getWidth() - shelfWidth);
+                // Snap to whole cards. Centring alone can leave the first visible
+                // card cut in half at the left edge of the shelf.
+                int step = targetWidth + dp(CARD_GAP_DP);
+                if (step > 0) {
+                    desired = (desired / step) * step;
+                    max = (max / step) * step;
+                }
                 desired = Math.max(0, Math.min(max, desired));
                 if (Math.abs(shelf.getScrollX() - desired) > dp(4)) {
                     shelf.smoothScrollTo(desired, 0);
@@ -2241,6 +2258,15 @@ public class MainActivity extends Activity {
                     return true;
                 }
 
+                // Dedicated channel keys still zap live TV while the on-screen
+                // controls are visible, so Up/Down can navigate every control.
+                if ((key == android.view.KeyEvent.KEYCODE_CHANNEL_UP
+                        || key == android.view.KeyEvent.KEYCODE_CHANNEL_DOWN)
+                        && currentEntry != null && "Live".equals(currentEntry.type)) {
+                    switchChannel(key == android.view.KeyEvent.KEYCODE_CHANNEL_DOWN);
+                    return true;
+                }
+
                 // D-pad navigation for custom player controls
                 if ((key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
                         || key == android.view.KeyEvent.KEYCODE_ENTER
@@ -2266,12 +2292,11 @@ public class MainActivity extends Activity {
                     return true;
                 }
 
-                // D-pad Up/Down: channel switching for live TV, control navigation for VOD
+                // D-pad Up/Down. Live TV changes channel with Up/Down whenever the
+                // focus is on the video (or the controls are hidden), which is the
+                // behaviour remote users expect. Once focus is on a player control,
+                // Up/Down moves between the control rows instead.
                 if (key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN) {
-                    if (!controlsVisible) {
-                        showControls(true);
-                        return true;
-                    }
                     // The error panel only has two buttons; keep the remote on them
                     // instead of switching live channels behind the dialog.
                     if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
@@ -2279,9 +2304,14 @@ public class MainActivity extends Activity {
                         else retryPlaybackButton.requestFocus();
                         return true;
                     }
-                    // For live TV, Up/Down switches channels (prev/next) regardless of focus
-                    if (currentEntry != null && "Live".equals(currentEntry.type)) {
+                    boolean live = currentEntry != null && "Live".equals(currentEntry.type);
+                    boolean onControl = isPlayerControlFocused(getCurrentFocus());
+                    if (live && (!controlsVisible || !onControl)) {
                         switchChannel(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+                        return true;
+                    }
+                    if (!controlsVisible) {
+                        showControls(true);
                         return true;
                     }
                     handleVerticalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
@@ -2472,6 +2502,12 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    /** True when focus is on the top bar, timeline or bottom control row. */
+    private boolean isPlayerControlFocused(View v) {
+        if (v == null) return false;
+        return v == backBtn || v == ccBtn || v == settingsBtn || v == progressBar || isBottomControl(v);
+    }
+
     private void handleHorizontalNavigation(boolean right) {
         View focused = getCurrentFocus();
         if (focused == null) {
@@ -2623,8 +2659,8 @@ public class MainActivity extends Activity {
 
     // Bottom controls
     private LinearLayout bottomControls;
-    private TextView rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn;
-    private TextView rewindLabel, playPauseLabel, forwardLabel, subtitlesLabel, qualityLabel, fullscreenLabel;
+    private TextView rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn;
+    private TextView rewindLabel, playPauseLabel, forwardLabel, subtitlesLabel, audioLabel, fullscreenLabel;
     private View focusedControl = null;
     private int focusedControlIndex = 0;
     private View[] controlOrder; // For D-pad navigation order
@@ -2701,7 +2737,9 @@ public class MainActivity extends Activity {
         rightContainer.setGravity(Gravity.CENTER_VERTICAL);
 
         ccBtn = createIconButton(R.drawable.ic_subtitles, "Subtitles");
+        ccBtn.setOnClickListener(v -> showSubtitleDialog());
         settingsBtn = createIconButton(R.drawable.ic_settings, "Settings");
+        settingsBtn.setOnClickListener(v -> showPlayerSettingsDialog());
         clockText = new TextView(this);
         clockText.setText(new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date()));
         clockText.setTextColor(WHITE);
@@ -2805,14 +2843,14 @@ public class MainActivity extends Activity {
         timelineContainer.addView(totalTimeText, new LinearLayout.LayoutParams(-2, -2));
 
         FrameLayout.LayoutParams timelineParams = new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM);
-        timelineParams.setMargins(0, 0, 0, dp(96)); // Above bottom controls (reduced from 120)
+        timelineParams.setMargins(0, 0, 0, dp(78)); // Sits just above the bottom controls
         playerOverlay.addView(timelineContainer, timelineParams);
 
         // --- BOTTOM CONTROLS ---
         bottomControls = new LinearLayout(this);
         bottomControls.setOrientation(LinearLayout.HORIZONTAL);
         bottomControls.setGravity(Gravity.CENTER);
-        bottomControls.setPadding(dp(32), dp(16), dp(32), dp(24));
+        bottomControls.setPadding(dp(24), dp(8), dp(24), dp(4));
         bottomControls.setBackground(bottomGradient);
 
         // Create control buttons with labels
@@ -2820,12 +2858,17 @@ public class MainActivity extends Activity {
         playPauseBtn = createControlButton(R.drawable.ic_pause, "Pause", "Pause");
         forwardBtn = createControlButton(R.drawable.ic_forward, "10s\nForward", "Forward 10 seconds");
         subtitlesBtn = createControlButton(R.drawable.ic_subtitles, "Subtitles\nOff", "Subtitles: Off");
-        qualityBtn = createControlButton(R.drawable.ic_quality, "Quality\nAuto", "Quality: Auto");
+        // Audio track selection replaces the old placeholder "Video quality"
+        // control: streams usually expose several audio renditions (languages,
+        // 5.1 vs stereo) and those are actually switchable through ExoPlayer.
+        audioBtn = createControlButton(R.drawable.ic_audio, "Audio\nAuto", "Audio: Auto");
+        audioBtn.setMaxLines(2);
+        audioBtn.setEllipsize(TextUtils.TruncateAt.END);
         fullscreenBtn = createControlButton(R.drawable.ic_fullscreen, "Fullscreen", "Fullscreen");
 
-        TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn};
+        TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn};
         for (TextView control : controls) {
-            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(64), 1);
+            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(60), 1);
             bottomControls.addView(control, controlParams);
         }
 
@@ -2834,11 +2877,11 @@ public class MainActivity extends Activity {
         playPauseBtn.setOnClickListener(v -> togglePlayPause());
         forwardBtn.setOnClickListener(v -> seekRelative(10000));
         subtitlesBtn.setOnClickListener(v -> showSubtitleDialog());
-        qualityBtn.setOnClickListener(v -> showQualityDialog());
+        audioBtn.setOnClickListener(v -> showAudioDialog());
         fullscreenBtn.setOnClickListener(v -> toggleFullscreen());
 
         // Control order for D-pad navigation (Left/Right)
-        controlOrder = new View[]{rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, qualityBtn, fullscreenBtn};
+        controlOrder = new View[]{rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn};
 
         // Initially hide bottom controls (only timeline + center visible)
         bottomControls.setVisibility(View.GONE);
@@ -3207,9 +3250,11 @@ public class MainActivity extends Activity {
     private void scheduleHideControls() {
         cancelHideControls();
         hideControlsRunnable = () -> {
-            if (controlsVisible && player != null && isPlaying) {
-                showControls(false);
-            }
+            if (!controlsVisible || player == null || !isPlaying) return;
+            View focused = getCurrentFocus();
+            // Never hide the row out from under a remote button the user is on.
+            if (isBottomControl(focused) || focused == backBtn || focused == ccBtn || focused == settingsBtn) return;
+            showControls(false);
         };
         hideControlsHandler.postDelayed(hideControlsRunnable, CONTROLS_HIDE_DELAY_MS);
     }
@@ -3424,14 +3469,141 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "Subtitle tracks not available", Toast.LENGTH_SHORT).show();
     }
 
-    private void showQualityDialog() {
-        // TODO: Implement quality selection for adaptive streams
-        String[] qualities = {"Auto", "4K", "1080p", "720p"};
+    /** Language name for an audio rendition, falling back to its code. */
+    private String audioTrackLanguage(Format format) {
+        if (format == null) return "";
+        if (format.label != null && !format.label.trim().isEmpty()) return format.label.trim();
+        String code = format.language == null ? "" : format.language.trim();
+        if (code.isEmpty()) return "";
+        try {
+            String display = new Locale(code).getDisplayLanguage(Locale.getDefault());
+            if (display != null && !display.isEmpty() && !display.equalsIgnoreCase(code)) return display;
+        } catch (Exception ignored) {}
+        return code.toUpperCase(Locale.ROOT);
+    }
+
+    /** "English · 5.1" style label for one audio rendition in the picker. */
+    private String audioTrackLabel(Format format) {
+        String language = audioTrackLanguage(format);
+        if (language.isEmpty()) language = "Track";
+        String layout = audioChannelLayout(format);
+        return layout.isEmpty() ? language : language + "  ·  " + layout;
+    }
+
+    private String audioChannelLayout(Format format) {
+        if (format == null || format.channelCount <= 0) return "";
+        switch (format.channelCount) {
+            case 1: return "Mono";
+            case 2: return "Stereo";
+            case 6: return "5.1";
+            case 8: return "7.1";
+            default: return format.channelCount + " ch";
+        }
+    }
+
+    /** Keeps the audio control's label in step with the selected rendition. */
+    private void updateAudioButtonLabel() {
+        if (audioBtn == null) return;
+        String label = "Auto";
+        if (player != null) {
+            try {
+                for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
+                    if (group.getType() != C.TRACK_TYPE_AUDIO || !group.isSelected()) continue;
+                    for (int i = 0; i < group.length; i++) {
+                        if (!group.isTrackSelected(i)) continue;
+                        String language = audioTrackLanguage(group.getTrackFormat(i));
+                        if (!language.isEmpty()) label = language;
+                        break;
+                    }
+                    break;
+                }
+            } catch (Exception ignored) {}
+        }
+        String shortLabel = label.length() > 16 ? label.substring(0, 15) + "…" : label;
+        audioBtn.setText("Audio\n" + shortLabel);
+        String desc = "Audio: " + label;
+        audioBtn.setContentDescription(desc);
+        audioBtn.setTag(desc);
+    }
+
+    private void applyAudioTrack(TrackSelectionOverride override) {
+        if (player == null) return;
+        try {
+            TrackSelectionParameters.Builder builder = player.getTrackSelectionParameters()
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                    .clearOverridesOfType(C.TRACK_TYPE_AUDIO);
+            if (override != null) builder.setOverrideForType(override);
+            player.setTrackSelectionParameters(builder.build());
+            updateAudioButtonLabel();
+            Toast.makeText(this, override == null ? "Audio: Auto" : "Audio track changed",
+                    Toast.LENGTH_SHORT).show();
+        } catch (Exception ignored) {
+            Toast.makeText(this, "Could not change the audio track", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Audio renditions the current stream carries. ExoPlayer only reports them
+     * once it has read the manifest, so this is built when the dialog opens.
+     */
+    private void showAudioDialog() {
+        if (player == null) return;
+        cancelHideControls();
+
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<TrackSelectionOverride> overrides = new ArrayList<>();
+        labels.add("Auto (default)");
+        overrides.add(null);
+        int selected = 0;
+
+        try {
+            Tracks tracks = player.getCurrentTracks();
+            for (Tracks.Group group : tracks.getGroups()) {
+                if (group.getType() != C.TRACK_TYPE_AUDIO) continue;
+                for (int i = 0; i < group.length; i++) {
+                    if (!group.isTrackSupported(i)) continue;
+                    labels.add(audioTrackLabel(group.getTrackFormat(i)));
+                    overrides.add(new TrackSelectionOverride(group.getMediaTrackGroup(), i));
+                    if (group.isTrackSelected(i)) selected = labels.size() - 1;
+                }
+            }
+        } catch (Exception ignored) {}
+
+        if (labels.size() == 1) {
+            Toast.makeText(this, "No other audio tracks in this stream", Toast.LENGTH_SHORT).show();
+            showControls(true);
+            return;
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Audio track")
+                .setSingleChoiceItems(labels.toArray(new String[0]), selected, (d, which) -> {
+                    applyAudioTrack(overrides.get(which));
+                    d.dismiss();
+                })
+                .setNegativeButton("Cancel", null)
+                .create();
+        // A TV dialog takes focus away from the player; give it back afterwards.
+        dialog.setOnDismissListener(d -> {
+            if (!playing) return;
+            showControls(true);
+            scheduleHideControls();
+            View target = (audioBtn != null && audioBtn.isShown()) ? audioBtn : centerPlayPauseBtn;
+            if (target != null) target.post(target::requestFocus);
+        });
+        dialog.show();
+    }
+
+    /** Player settings reachable from the remote's top-bar gear button. */
+    private void showPlayerSettingsDialog() {
+        String[] options = {"Audio track", "Subtitles", "Fullscreen"};
         new AlertDialog.Builder(this)
-            .setTitle("Video Quality")
-            .setItems(qualities, (d, w) -> {
-                qualityBtn.setContentDescription("Quality: " + qualities[w]);
-                Toast.makeText(this, "Quality set to " + qualities[w], Toast.LENGTH_SHORT).show();
+            .setTitle("Player settings")
+            .setItems(options, (d, which) -> {
+                if (which == 0) showAudioDialog();
+                else if (which == 1) showSubtitleDialog();
+                else toggleFullscreen();
             })
             .show();
     }
@@ -3534,6 +3706,15 @@ public class MainActivity extends Activity {
                     } else {
                         cancelHideControls();
                     }
+                }
+
+                // Streams report their audio groups a moment after the manifest
+                // loads; keep the Audio control showing what is actually playing.
+                @Override public void onTracksChanged(Tracks tracks) {
+                    if (player != boundPlayer) return;
+                    runOnUiThread(() -> {
+                        if (player == boundPlayer) updateAudioButtonLabel();
+                    });
                 }
             });
 
@@ -3726,6 +3907,7 @@ public class MainActivity extends Activity {
             bottomControls = null;
             progressBar = null;
             controlOrder = null;
+            audioBtn = null;
             return;
         }
         if (gridOverlayView != null) {
@@ -3735,16 +3917,118 @@ public class MainActivity extends Activity {
         super.onBackPressed();
     }
 
-    private void loadFavorites(){Set<String> saved=getPreferences(0).getStringSet("favorites",Collections.emptySet());favoriteKeys.addAll(saved);}
-    private void saveFavorites(){getPreferences(0).edit().putStringSet("favorites",new HashSet<>(favoriteKeys)).apply();}
-    private boolean isFavorite(Entry e){try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}}
+    /** Stable identity for a saved title, so expiring URL tokens cannot hide it. */
+    private String favoriteKey(Entry e) {
+        if (e == null) return "";
+        try {
+            String type = e.type == null ? "" : e.type.trim();
+            String group = e.group == null ? "" : e.group.trim();
+            String name = e.name == null ? "" : e.name.trim().toLowerCase(Locale.ROOT);
+            if (name.isEmpty()) return "";
+            return sha256(type + "\u0001" + group + "\u0001" + name);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    /**
+     * Everything in My List: titles from the loaded playlist (they carry the
+     * freshest URL) plus saved snapshots the playlist no longer has, such as a
+     * channel whose stream token rotated or a title from another source.
+     */
+    private ArrayList<Entry> myListEntries() {
+        LinkedHashMap<String, Entry> byKey = new LinkedHashMap<>();
+        boolean migrated = false;
+        for (Entry e : entries) {
+            if (!isFavorite(e)) continue;
+            String key = favoriteKey(e);
+            if (key.isEmpty()) continue;
+            // Backfill snapshots for favourites saved by older versions.
+            if (!favoriteEntries.containsKey(key)) {
+                favoriteEntries.put(key, e);
+                migrated = true;
+            }
+            byKey.put(key, e);
+        }
+        for (Map.Entry<String, Entry> saved : favoriteEntries.entrySet()) {
+            if (!byKey.containsKey(saved.getKey())) byKey.put(saved.getKey(), saved.getValue());
+        }
+        if (migrated) saveFavorites();
+        return new ArrayList<>(byKey.values());
+    }
+
+    private void loadFavorites(){
+        Set<String> saved=getPreferences(0).getStringSet("favorites",Collections.emptySet());
+        favoriteKeys.addAll(saved);
+        String raw=getPreferences(0).getString(FAVORITES_JSON,null);
+        if(raw==null||raw.isEmpty())return;
+        try{
+            JSONArray list=new JSONArray(raw);
+            for(int i=0;i<list.length();i++){
+                JSONObject o=list.getJSONObject(i);
+                Entry e=new Entry(o.optString("name",""),o.optString("url",""),
+                        o.optString("group",""),o.optString("logo",""),
+                        o.optString("type","Movies"));
+                String key=o.optString("key","");
+                if(key.isEmpty())key=favoriteKey(e);
+                if(!key.isEmpty())favoriteEntries.put(key,e);
+            }
+        }catch(Exception ignored){}
+    }
+
+    private void saveFavorites(){
+        try{
+            JSONArray list=new JSONArray();
+            for(Map.Entry<String,Entry> saved:favoriteEntries.entrySet()){
+                Entry e=saved.getValue();
+                JSONObject o=new JSONObject();
+                o.put("key",saved.getKey());
+                o.put("name",e.name==null?"":e.name);
+                o.put("url",e.url==null?"":e.url);
+                o.put("group",e.group==null?"":e.group);
+                o.put("logo",e.logo==null?"":e.logo);
+                o.put("type",e.type==null?"":e.type);
+                list.put(o);
+            }
+            getPreferences(0).edit()
+                    .putStringSet("favorites",new HashSet<>(favoriteKeys))
+                    .putString(FAVORITES_JSON,list.toString())
+                    .apply();
+        }catch(Exception ignored){}
+    }
+
+    private boolean isFavorite(Entry e){
+        if(e==null)return false;
+        String key=favoriteKey(e);
+        if(!key.isEmpty()&&favoriteEntries.containsKey(key))return true;
+        try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}
+    }
+
+    /** Add or remove one title from both the snapshot and the legacy key set. */
+    private boolean setFavorite(Entry e, boolean add){
+        return setFavorite(e, add, true);
+    }
+
+    private boolean setFavorite(Entry e, boolean add, boolean persist){
+        if(e==null)return false;
+        boolean changed=false;
+        String key=favoriteKey(e);
+        if(add){
+            if(!key.isEmpty()&&favoriteEntries.put(key,e)==null)changed=true;
+            try{if(favoriteKeys.add(sha256(e.url)))changed=true;}catch(Exception ignored){}
+        }else{
+            if(!key.isEmpty()&&favoriteEntries.remove(key)!=null)changed=true;
+            try{if(favoriteKeys.remove(sha256(e.url)))changed=true;}catch(Exception ignored){}
+        }
+        if(changed&&persist)saveFavorites();
+        return changed;
+    }
+
     private void toggleFavorite(Entry e){
         if(e==null)return;
         try{
-            String key=sha256(e.url);
-            boolean add=!favoriteKeys.contains(key);
-            if(add)favoriteKeys.add(key);else favoriteKeys.remove(key);
-            saveFavorites();
+            boolean add=!isFavorite(e);
+            setFavorite(e,add);
             Toast.makeText(this,add?"Added to My List":"Removed from My List",Toast.LENGTH_SHORT).show();
             // While a stream is playing the home screen is not attached, so the
             // rebuild waits until playback closes. The key is already saved.
