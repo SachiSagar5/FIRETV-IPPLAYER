@@ -10,8 +10,11 @@ android {
         // 16 / 1.6.0: Live TV auto-skips dead channels, shelves centre focused
         // cards smoothly, hardware layers are transient, and the app now has a
         // branded splash + animated loading states.
-        versionCode 16
-        versionName '1.6.0'
+        // 17 / 1.6.1: HTTPS fallback so playlists with expired, self-signed or
+        // incomplete provider certificates load instead of failing. Normal
+        // platform validation is still tried first.
+        versionCode 17
+        versionName '1.6.1'
     }
 
     /**

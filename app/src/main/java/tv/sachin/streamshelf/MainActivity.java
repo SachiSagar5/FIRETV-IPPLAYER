@@ -50,6 +50,14 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 
 public class MainActivity extends Activity {
     private static final String TAG = "StreamShelf";
@@ -118,6 +126,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         setupExceptionHandler();
+        installRelaxedTls();
         getWindow().setFlags(1024,1024);
         applyImmersiveFullscreen();
         initWakeLock();
@@ -164,7 +173,7 @@ public class MainActivity extends Activity {
             try (FileWriter fw = new FileWriter(logFile)) {
                 fw.write("StreamShelf Crash Report\n");
                 fw.write("Time: " + new Date() + "\n");
-                fw.write("Version: 1.6.0\n");
+                fw.write("Version: 1.6.1\n");
                 fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
                 fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
                 fw.write("Playing: " + playing + "\n");
@@ -176,6 +185,56 @@ public class MainActivity extends Activity {
                 ex.printStackTrace(new PrintWriter(fw));
             }
         } catch (Exception ignored) {}
+    }
+
+    // Many IPTV providers serve playlists over HTTPS with expired, self-signed
+    // or incomplete certificate chains. Validate with the platform trust store
+    // first, but fall back to accepting the chain so the playlist still loads.
+    private static boolean relaxedTlsInstalled = false;
+
+    private void installRelaxedTls() {
+        if (relaxedTlsInstalled) return;
+        try {
+            TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            factory.init((java.security.KeyStore) null);
+            X509TrustManager platformTrust = null;
+            for (TrustManager tm : factory.getTrustManagers()) {
+                if (tm instanceof X509TrustManager) { platformTrust = (X509TrustManager) tm; break; }
+            }
+            final X509TrustManager systemTrust = platformTrust;
+            X509TrustManager relaxed = new X509TrustManager() {
+                @Override public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                    if (systemTrust != null) systemTrust.checkClientTrusted(chain, authType);
+                }
+                @Override public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                    if (systemTrust == null) return;
+                    try {
+                        systemTrust.checkServerTrusted(chain, authType);
+                    } catch (CertificateException e) {
+                        Log.w(TAG, "Accepting untrusted server certificate: " + e.getMessage());
+                    }
+                }
+                @Override public X509Certificate[] getAcceptedIssuers() {
+                    return systemTrust == null ? new X509Certificate[0] : systemTrust.getAcceptedIssuers();
+                }
+            };
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(null, new TrustManager[]{relaxed}, null);
+            SSLContext.setDefault(context);
+            HttpsURLConnection.setDefaultSSLSocketFactory(context.getSocketFactory());
+
+            final HostnameVerifier originalVerifier = HttpsURLConnection.getDefaultHostnameVerifier();
+            HttpsURLConnection.setDefaultHostnameVerifier(new HostnameVerifier() {
+                @Override public boolean verify(String hostname, javax.net.ssl.SSLSession session) {
+                    if (originalVerifier != null && originalVerifier != this && originalVerifier.verify(hostname, session)) return true;
+                    Log.w(TAG, "Accepting certificate hostname mismatch for " + hostname);
+                    return true;
+                }
+            });
+            relaxedTlsInstalled = true;
+        } catch (Exception e) {
+            Log.e(TAG, "Could not install relaxed TLS policy", e);
+        }
     }
 
     private void initWakeLock() {
