@@ -6,6 +6,8 @@ import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.*;
@@ -78,13 +80,37 @@ public class MainActivity extends Activity {
     // detached view silently fails.
     private FrameLayout gridOverlayView; private View gridBackButton; private View firstGridItem; private View previousHomeFirstContent;
     private int gridFocusIndex;
-    private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText; private Button retryPlaybackButton, browseBtn;
+    private Entry currentEntry; private LinearLayout playerLoadingPanel,playerErrorPanel; private TextView playerLoadingText,playerErrorText; private Button retryPlaybackButton, browseBtn;
     private final ExecutorService playlistWorkers=Executors.newFixedThreadPool(2);
     private final AtomicInteger playlistRequestId=new AtomicInteger();
     private PowerManager.WakeLock wakeLock;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean networkAvailable = true;
+
+    // Live TV auto-recovery. A dead channel is remembered for this playback
+    // session so the auto-skipper walks forward instead of bouncing between the
+    // same broken URL forever. The set is cleared when playback starts or the
+    // user retries.
+    private final HashSet<String> failedLiveUrls = new HashSet<>();
+    private boolean liveSkipScheduled = false;
+    private Runnable liveSkipRunnable;
+
+    // In-app splash overlay (no extra Activity, so the playlist request keeps
+    // running while it is visible).
+    private View splashView;
+    private android.animation.ValueAnimator splashPulse;
+    private long splashShownAt = 0L;
+    private boolean splashDismissed = true;
+    private boolean splashDismissPending = false;
+    private static final long SPLASH_MIN_MS = 1000L;
+    private static final long SPLASH_TIMEOUT_MS = 12000L;
+
+    // Thumbnail scans are coalesced while scrolling instead of walking every
+    // shelf on every scroll pixel.
+    private Runnable thumbnailScanRunnable;
+    private final Rect reusableRect = new Rect();
+    private String playlistError;
 
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
     private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
@@ -138,7 +164,7 @@ public class MainActivity extends Activity {
             try (FileWriter fw = new FileWriter(logFile)) {
                 fw.write("StreamShelf Crash Report\n");
                 fw.write("Time: " + new Date() + "\n");
-                fw.write("Version: 1.5.2\n");
+                fw.write("Version: 1.6.0\n");
                 fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
                 fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
                 fw.write("Playing: " + playing + "\n");
@@ -206,14 +232,15 @@ public class MainActivity extends Activity {
         sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",20,RED);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",17,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",17,RED);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
         nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
-        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->setSidebarExpanded(isInsideView(newFocus,nav)));
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->{setSidebarExpanded(isInsideView(newFocus,nav));scrollShelfToFocused(newFocus);scrollMainToFocused(newFocus);});
         setSidebarExpanded(false);
         LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);root.addView(main,new LinearLayout.LayoutParams(0,-1,1));LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);top.setPadding(dp(16),dp(3),dp(25),0);main.addView(top,new LinearLayout.LayoutParams(-1,dp(54)));searchControl=text("⌕",29,WHITE);searchControl.setGravity(Gravity.CENTER);searchControl.setFocusable(true);searchControl.setClickable(true);searchControl.setContentDescription("Search playlist");searchControl.setId(View.generateViewId());searchControl.setPadding(dp(12),0,dp(12),0);setFocusStyle(searchControl,Color.TRANSPARENT,7);searchControl.setOnClickListener(v->searchDialog());top.addView(searchControl,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView settings=text("⚙",22,WHITE);settings.setGravity(Gravity.CENTER);settings.setFocusable(true);settings.setClickable(true);settings.setContentDescription("Settings and playlist sources");settings.setPadding(dp(8),0,dp(8),0);setFocusStyle(settings,Color.TRANSPARENT,7);settings.setOnClickListener(v->sourceDialog());top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView clock=text(new java.text.SimpleDateFormat("hh:mm a",Locale.getDefault()).format(new Date()),14,WHITE);clock.setGravity(Gravity.CENTER);top.addView(clock,new LinearLayout.LayoutParams(dp(94),dp(44)));
-        mainScroll=new ScrollView(this);mainScroll.setFillViewport(true);mainScroll.setVerticalScrollBarEnabled(false);mainScroll.setClipChildren(false);mainScroll.setClipToPadding(false);mainScroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->{for(HorizontalScrollView shelf:shelfRows)loadVisibleThumbnails(shelf);});main.addView(mainScroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(14),dp(1),dp(22),dp(16));content.setOrientation(LinearLayout.VERTICAL);content.setClipChildren(false);mainScroll.addView(content);
+        mainScroll=new SmoothScrollView(this);mainScroll.setFillViewport(true);mainScroll.setVerticalScrollBarEnabled(false);mainScroll.setClipChildren(false);mainScroll.setClipToPadding(false);mainScroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->scheduleThumbnailScan(90));main.addView(mainScroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(14),dp(1),dp(22),dp(16));content.setOrientation(LinearLayout.VERTICAL);content.setClipChildren(false);mainScroll.addView(content);
         status=text("",12,MUTED);status.setPadding(dp(15),0,0,0);LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL|Gravity.RIGHT);footer.setPadding(dp(12),0,dp(24),dp(7));TextView hints=text("✥  Navigate     ⓞ  Select     ↶  Back     MENU  My List",12,0xffc5c8d0);hints.setGravity(Gravity.CENTER);hints.setPadding(dp(16),dp(7),dp(16),dp(7));hints.setBackground(rounded(0xff10151d,24));footer.addView(status,new LinearLayout.LayoutParams(0,dp(32),1));footer.addView(hints);main.addView(footer,new LinearLayout.LayoutParams(-1,dp(43)));
         requestInitialFocus();
+        showSplash();
     }
-    private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",27,WHITE);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Connect a playlist to start building your home screen.",16,MUTED);content.addView(sub);Button b=button("Add playlist");b.setId(View.generateViewId());b.setOnClickListener(v->sourceDialog());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(54));p.setMargins(0,dp(18),0,0);content.addView(b,p);firstContentItem=b;}
+    private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",27,WHITE);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Connect a playlist to start building your home screen.",16,MUTED);content.addView(sub);Button b=button("Add playlist");b.setId(View.generateViewId());b.setOnClickListener(v->sourceDialog());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(54));p.setMargins(0,dp(18),0,0);content.addView(b,p);firstContentItem=b;dismissSplash();}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
     private void refreshRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
@@ -230,7 +257,11 @@ public class MainActivity extends Activity {
                 return 0;
             });
         }
-        if(shown.isEmpty()){TextView empty=text(entries.isEmpty()?"Loading your playlist…":category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.",20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;}
+        if(shown.isEmpty()){
+            if(entries.isEmpty()&&playlistError==null){View loading=loadingBlock("Loading your playlist");content.addView(loading);firstContentItem=loading;wireMainFocus();animateContentIn();return;}
+            String emptyMessage=entries.isEmpty()?(playlistError!=null?"Could not load this playlist.\n"+playlistError:"Loading your playlist…"):category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.";
+            TextView empty=text(emptyMessage,20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;
+        }
         LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
 
         // Category icons for group headers - use vector drawables
@@ -586,8 +617,14 @@ public class MainActivity extends Activity {
     private void renderSeriesCategory() {
         ArrayList<Series> shows = seriesIndex();
         if (shows.isEmpty()) {
+            if (entries.isEmpty() && playlistError == null) {
+                View loading = loadingBlock("Loading your playlist");
+                content.addView(loading);
+                firstContentItem = loading;
+                return;
+            }
             TextView empty = text(entries.isEmpty()
-                    ? "Loading your playlist\u2026"
+                    ? "Could not load this playlist.\n" + playlistError
                     : "No series found in this playlist.", 20, MUTED);
             empty.setPadding(0, dp(22), 0, 0);
             empty.setFocusable(true);
@@ -648,7 +685,7 @@ public class MainActivity extends Activity {
         appendHomeShelf("Movies","Movies",false);
         appendSeriesShelf();
         appendHomeShelf("Live TV","Live",true); // Live TV shares the dashboard shelf size
-        if(entries.isEmpty()){TextView empty=text("Loading your playlist…",16,MUTED);empty.setPadding(dp(4),dp(12),0,dp(10));content.addView(empty);}
+        if(entries.isEmpty()){View loading=playlistError!=null?text("Could not load this playlist.\n"+playlistError,16,MUTED):loadingBlock("Loading your playlist");if(loading instanceof TextView)((TextView)loading).setPadding(dp(4),dp(12),0,dp(10));content.addView(loading);}
     }
 
     private Entry featuredEntry(){
@@ -1474,7 +1511,13 @@ public class MainActivity extends Activity {
         shelfRows.add(hsv);
         addHomeTiles(hsv, row, shelf, 0, live);}
 
-    private HorizontalScrollView createShelfScroll(){HorizontalScrollView hsv=new HorizontalScrollView(this);hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->loadVisibleThumbnails(hsv));return hsv;}
+    private HorizontalScrollView createShelfScroll(){
+        ShelfScrollView hsv=new ShelfScrollView(this);
+        hsv.setHorizontalScrollBarEnabled(false);hsv.setClipToPadding(false);hsv.setClipChildren(false);
+        LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);row.setClipChildren(false);row.setClipToPadding(false);hsv.addView(row);
+        hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->scheduleThumbnailScan(60));
+        return hsv;
+    }
     private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=start==0?6:12;int end=Math.min(start+batchSize,shelf.size());int width=dp(CARD_W_DP),height=dp(CARD_ART_H_DP);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();addFavoriteBadge(art,e);if(e.type.equals("Live")){TextView liveBadge=text("LIVE",10,WHITE);liveBadge.setTypeface(null,Typeface.BOLD);liveBadge.setPadding(dp(7),dp(3),dp(7),dp(3));liveBadge.setBackground(rounded(RED,4));FrameLayout.LayoutParams liveParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);liveParams.setMargins(dp(7),dp(7),0,0);art.addView(liveBadge,liveParams);}TextView titleText=text(e.name,13,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(CARD_H_DP));tileParams.setMargins(0,0,dp(CARD_GAP_DP),dp(4));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("See All  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8);more.setTag(shelf);more.setOnClickListener(v->{ArrayList<Entry> allItems=(ArrayList<Entry>)v.getTag();if(allItems==null||allItems.isEmpty())return;String shelfTitle=live?"Live TV":allItems.get(0).type;showAllGrid(shelfTitle,allItems);});row.addView(more,new LinearLayout.LayoutParams(dp(CARD_W_DP),dp(CARD_H_DP)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
     private static final String FAVORITE_BADGE = "favorite-badge";
@@ -1608,6 +1651,8 @@ public class MainActivity extends Activity {
     private void loadVisibleThumbnails(HorizontalScrollView shelf) {
         if (shelf.getVisibility() != View.VISIBLE || shelf.getChildCount() == 0
                 || !(shelf.getChildAt(0) instanceof ViewGroup)) return;
+        // Skip shelves that are entirely off-screen instead of walking them.
+        if (!shelf.getGlobalVisibleRect(reusableRect)) return;
         ViewGroup row = (ViewGroup) shelf.getChildAt(0);
         for (int i = 0; i < row.getChildCount(); i++) {
             View child = row.getChildAt(i);
@@ -1615,8 +1660,7 @@ public class MainActivity extends Activity {
             LinearLayout tile = (LinearLayout) child;
             if (tile.getChildCount() == 0 || !(tile.getChildAt(0) instanceof FrameLayout)) continue;
             FrameLayout art = (FrameLayout) tile.getChildAt(0);
-            Rect visible = new Rect();
-            if (!art.getGlobalVisibleRect(visible)) continue;
+            if (!art.getGlobalVisibleRect(reusableRect)) continue;
             TextView fallback = null;
             ImageView image = null;
             for (int j = 0; j < art.getChildCount(); j++) {
@@ -1695,7 +1739,277 @@ public class MainActivity extends Activity {
     private Bitmap decodeThumbnail(File file,int width,int height){BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getAbsolutePath(),bounds);if(bounds.outWidth<=0||bounds.outHeight<=0)return null;BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;while(bounds.outWidth/(options.inSampleSize*2)>=width&&bounds.outHeight/(options.inSampleSize*2)>=height)options.inSampleSize*=2;options.inPreferredConfig=Bitmap.Config.RGB_565;return BitmapFactory.decodeFile(file.getAbsolutePath(),options);}
     private String sha256(String value)throws Exception{byte[] bytes=MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));StringBuilder out=new StringBuilder();for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&255));return out.toString();}
     private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;for(File f:files)size+=f.length();int count=files.length;for(File f:files){if(count<=140&&size<=36L*1024*1024)break;long bytes=f.length();if(f.delete()){size-=bytes;count--;}}}
-    private void animateContentIn(){content.animate().alpha(1f).setDuration(180).start();}
+    private void animateContentIn(){
+        if(content==null)return;
+        content.animate().cancel();
+        content.setAlpha(0f);
+        content.setTranslationY(dp(12));
+        content.animate().alpha(1f).translationY(0f)
+            .setDuration(230)
+            .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f))
+            .start();
+    }
+
+    // ==================== LOADING / SPLASH ====================
+
+    /** Animated three-dot loader used by the splash and playlist placeholders. */
+    private class LoadingDotsView extends View {
+        private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private android.animation.ValueAnimator animator;
+        private float phase = 0f;
+        private int dotColor = RED;
+
+        LoadingDotsView(Context context) {
+            super(context);
+            dotPaint.setStyle(Paint.Style.FILL);
+            dotPaint.setColor(dotColor);
+        }
+
+        void setDotColor(int color) {
+            dotColor = color;
+            dotPaint.setColor(color);
+            invalidate();
+        }
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            if (animator != null) return;
+            animator = android.animation.ValueAnimator.ofFloat(0f, 1f);
+            animator.setDuration(1000);
+            animator.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            animator.setInterpolator(new android.view.animation.LinearInterpolator());
+            animator.addUpdateListener(a -> {
+                phase = (float) a.getAnimatedValue() * (float) (Math.PI * 2);
+                invalidate();
+            });
+            animator.start();
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            if (animator != null) { animator.cancel(); animator = null; }
+            super.onDetachedFromWindow();
+        }
+
+        @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            setMeasuredDimension(resolveSize(dp(64), widthMeasureSpec),
+                    resolveSize(dp(22), heightMeasureSpec));
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float radius = dp(3.4f);
+            float gap = dp(12f);
+            float centerY = getHeight() / 2f;
+            float startX = getWidth() / 2f - gap;
+            for (int i = 0; i < 3; i++) {
+                float wave = (float) Math.sin(phase - i * 0.9f);
+                float scale = 0.62f + 0.55f * ((wave + 1f) / 2f);
+                dotPaint.setColor(dotColor);
+                dotPaint.setAlpha(i == 1 ? 255 : 185);
+                canvas.drawCircle(startX + i * gap, centerY, radius * scale, dotPaint);
+            }
+        }
+    }
+
+    /** Focusable "Loading…" placeholder with the animated dots. */
+    private View loadingBlock(String message) {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setGravity(Gravity.CENTER_HORIZONTAL);
+        block.setPadding(0, dp(28), 0, dp(16));
+        block.setFocusable(true);
+        block.setId(View.generateViewId());
+        TextView label = text(message, 18, MUTED);
+        label.setGravity(Gravity.CENTER);
+        block.addView(label, new LinearLayout.LayoutParams(-2, -2));
+        LoadingDotsView dots = new LoadingDotsView(this);
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(64), dp(22));
+        dotParams.setMargins(0, dp(12), 0, 0);
+        block.addView(dots, dotParams);
+        return block;
+    }
+
+    private void showSplash() {
+        if (splashView != null) return;
+        splashShownAt = SystemClock.uptimeMillis();
+        splashDismissed = false;
+        splashDismissPending = false;
+
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{0xff161a23, 0xff05080c}));
+        // Swallow touches while the splash is up; the remote still works on the
+        // screen underneath once the overlay fades.
+        overlay.setClickable(true);
+
+        LinearLayout stack = new LinearLayout(this);
+        stack.setOrientation(LinearLayout.VERTICAL);
+        stack.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        final TextView mark = text("▶", 40, WHITE);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackground(rounded(RED, 22));
+        stack.addView(mark, new LinearLayout.LayoutParams(dp(92), dp(92)));
+
+        TextView brand = text("StreamShelf", 30, WHITE);
+        brand.setTypeface(null, Typeface.BOLD);
+        brand.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(-2, -2);
+        brandParams.setMargins(0, dp(20), 0, 0);
+        stack.addView(brand, brandParams);
+
+        TextView tagline = text("Live TV  ·  Movies  ·  Series", 14, MUTED);
+        tagline.setGravity(Gravity.CENTER);
+        tagline.setPadding(0, dp(6), 0, 0);
+        stack.addView(tagline);
+
+        LoadingDotsView dots = new LoadingDotsView(this);
+        dots.setDotColor(RED);
+        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(64), dp(22));
+        dotParams.setMargins(0, dp(24), 0, 0);
+        stack.addView(dots, dotParams);
+
+        overlay.addView(stack, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        addContentView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        splashView = overlay;
+
+        splashPulse = android.animation.ValueAnimator.ofFloat(1f, 1.08f);
+        splashPulse.setDuration(860);
+        splashPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        splashPulse.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        splashPulse.setInterpolator(new android.view.animation.AccelerateDecelerateInterpolator());
+        splashPulse.addUpdateListener(a -> {
+            float scale = (float) a.getAnimatedValue();
+            mark.setScaleX(scale);
+            mark.setScaleY(scale);
+        });
+        splashPulse.start();
+
+        // Never let a stuck request pin the splash forever.
+        if (handler != null) handler.postDelayed(this::dismissSplash, SPLASH_TIMEOUT_MS);
+    }
+
+    private void dismissSplash() {
+        if (splashView == null || splashDismissPending) return;
+        long elapsed = SystemClock.uptimeMillis() - splashShownAt;
+        if (elapsed < SPLASH_MIN_MS) {
+            splashDismissPending = true;
+            if (handler != null) {
+                handler.postDelayed(() -> {
+                    splashDismissPending = false;
+                    dismissSplash();
+                }, SPLASH_MIN_MS - elapsed);
+            }
+            return;
+        }
+        dismissSplashNow();
+    }
+
+    private void dismissSplashNow() {
+        if (splashView == null) return;
+        final View view = splashView;
+        splashView = null;
+        splashDismissed = true;
+        splashDismissPending = false;
+        if (splashPulse != null) {
+            splashPulse.cancel();
+            splashPulse = null;
+        }
+        view.animate().alpha(0f).setDuration(300)
+            .setInterpolator(new android.view.animation.AccelerateInterpolator())
+            .withEndAction(() -> {
+                ViewParent parent = view.getParent();
+                if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+            })
+            .start();
+    }
+
+    // ==================== SMOOTH NAVIGATION ====================
+
+    /** ScrollView that leaves smooth, Netflix-style centring to the focus listener. */
+    private class SmoothScrollView extends ScrollView {
+        SmoothScrollView(Context context) { super(context); }
+        @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+            return true; // handled by scrollMainToFocused()
+        }
+    }
+
+    /** Horizontal shelf that does not snap-jump when a card receives focus. */
+    private class ShelfScrollView extends HorizontalScrollView {
+        ShelfScrollView(Context context) { super(context); }
+        @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+            return true; // handled by scrollShelfToFocused()
+        }
+    }
+
+    /** Keep the focused card centred in its shelf with a smooth animation. */
+    private void scrollShelfToFocused(View focused) {
+        if (focused == null || shelfRows.isEmpty()) return;
+        for (HorizontalScrollView shelf : shelfRows) {
+            if (shelf == null || !isInsideView(focused, shelf)) continue;
+            if (shelf.getChildCount() == 0 || !(shelf.getChildAt(0) instanceof ViewGroup)) return;
+            final ViewGroup row = (ViewGroup) shelf.getChildAt(0);
+            View child = focused;
+            while (child != null && child.getParent() != row) {
+                ViewParent parent = child.getParent();
+                if (!(parent instanceof View)) return;
+                child = (View) parent;
+            }
+            if (child == null) return;
+            final View target = child;
+            shelf.post(() -> {
+                int shelfWidth = shelf.getWidth();
+                int targetWidth = target.getWidth();
+                if (shelfWidth <= 0 || targetWidth <= 0) return;
+                int desired = target.getLeft() - (shelfWidth - targetWidth) / 2;
+                int max = Math.max(0, row.getWidth() - shelfWidth);
+                desired = Math.max(0, Math.min(max, desired));
+                if (Math.abs(shelf.getScrollX() - desired) > dp(4)) {
+                    shelf.smoothScrollTo(desired, 0);
+                }
+            });
+            return;
+        }
+    }
+
+    /** Keep the focused shelf comfortably inside the vertical viewport. */
+    private void scrollMainToFocused(View focused) {
+        if (focused == null || content == null || mainScroll == null) return;
+        if (!isInsideView(focused, content)) return;
+        View block = focused;
+        while (block != null && block.getParent() != content) {
+            ViewParent parent = block.getParent();
+            if (!(parent instanceof View)) return;
+            block = (View) parent;
+        }
+        if (block == null) return;
+        final View target = block;
+        mainScroll.post(() -> {
+            int viewport = mainScroll.getHeight();
+            if (viewport <= 0) return;
+            int scrollY = mainScroll.getScrollY();
+            int top = target.getTop();
+            int bottom = target.getBottom();
+            int margin = dp(14);
+            int desired = scrollY;
+            if (top - margin < scrollY) {
+                desired = Math.max(0, top - margin);
+            } else if (bottom + margin > scrollY + viewport) {
+                desired = Math.max(0, bottom + margin - viewport);
+            }
+            if (desired != scrollY) mainScroll.smoothScrollTo(0, desired);
+        });
+    }
+
+    /** Coalesce thumbnail work triggered by rapid scroll events. */
+    private void scheduleThumbnailScan(long delayMs) {
+        if (handler == null) return;
+        if (thumbnailScanRunnable != null) handler.removeCallbacks(thumbnailScanRunnable);
+        thumbnailScanRunnable = () -> {
+            thumbnailScanRunnable = null;
+            for (HorizontalScrollView shelf : shelfRows) loadVisibleThumbnails(shelf);
+        };
+        handler.postDelayed(thumbnailScanRunnable, Math.max(16, delayMs));
+    }
     private void updateCategoryTabs(){for(TextView tab:categoryTabs){boolean selected=category.equals(String.valueOf(tab.getTag()));tab.setTextColor(selected?WHITE:0xffd0d2d7);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(rounded(selected?0xffa90d19:Color.TRANSPARENT,7));}}
     private boolean isInsideView(View child, ViewGroup parent){for(View view=child;view!=null;){if(view==parent)return true;android.view.ViewParent next=view.getParent();view=next instanceof View?(View)next:null;}return false;}
     private void setSidebarExpanded(boolean expanded){
@@ -1750,23 +2064,29 @@ public class MainActivity extends Activity {
             v.setBackground(bg);
             v.animate().cancel();
             if(focused){
+                // Hardware layer only while the card is transforming. Leaving it
+                // on permanently cost a full-size offscreen buffer per card.
+                v.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                float scale = isMenuItem ? 1.05f : 1.08f;
                 v.animate()
-                    .scaleX(1.06f).scaleY(1.06f)
+                    .scaleX(scale).scaleY(scale)
                     .translationZ(dp(12))
-                    .setDuration(180)
-                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.1f))
+                    .setDuration(190)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(1.12f))
                     .start();
             } else {
+                final View animated = v;
                 v.animate()
                     .scaleX(1f).scaleY(1f)
                     .translationZ(0)
-                    .setDuration(180)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f))
+                    .setDuration(190)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f))
+                    .withEndAction(() -> {
+                        if (!animated.isFocused()) animated.setLayerType(View.LAYER_TYPE_NONE, null);
+                    })
                     .start();
             }
         });
-        // Enable hardware acceleration for smooth animations
-        view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
     }
     private TextView currentCategoryTab(){for(TextView tab:categoryTabs)if(category.equals(String.valueOf(tab.getTag())))return tab;return categoryTabs.isEmpty()?sourceLabel:categoryTabs.get(0);}
     private void requestInitialFocus(){
@@ -2132,7 +2452,7 @@ public class MainActivity extends Activity {
             else if (controlOrder.length > 0) controlOrder[0].requestFocus();
         }
     }
-    private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);seriesIndexCache=null;seriesIndexCacheSize=-1;status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});});}
+    private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();playlistError=null;status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);seriesIndexCache=null;seriesIndexCacheSize=-1;playlistError=err;status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);if(parsed.isEmpty()&&err==null)playlistError="No playable entries found. Check the M3U format and URLs.";dismissSplash();refreshRows();});});}
     private String afterComma(String s){int i=s.indexOf(',');String v=i>=0?s.substring(i+1).trim():"Untitled";return v.isEmpty()?"Untitled":v;}
     private String attr(String s,java.util.regex.Pattern pattern){java.util.regex.Matcher m=pattern.matcher(s);return m.find()?m.group(1):"";}
     private String classify(String g,String n){String s=(g+" "+n).toLowerCase(Locale.ROOT);if(SERIES_HINT.matcher(s).find())return "Series";if(MOVIE_HINT.matcher(s).find())return "Movies";return "Live";}
@@ -2168,6 +2488,8 @@ public class MainActivity extends Activity {
         try {
             previousHomeFocus = getCurrentFocus();
             currentEntry = e;
+            failedLiveUrls.clear();
+            cancelPendingLiveSkip();
             pendingResumeMs = resumePositionFor(e);
             playerOverlay = new FrameLayout(this);
             playerOverlay.setBackgroundColor(Color.BLACK);
@@ -2185,7 +2507,12 @@ public class MainActivity extends Activity {
 
             buildCustomPlayerUI();
             setContentView(playerOverlay);
-            playerOverlay.animate().alpha(1f).setDuration(140).start();
+            playerOverlay.setScaleX(0.985f);
+            playerOverlay.setScaleY(0.985f);
+            playerOverlay.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(230)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.4f))
+                .start();
             playing = true;
             isPlaying = true; // Start in playing state
             acquireWakeLock();
@@ -2491,6 +2818,7 @@ public class MainActivity extends Activity {
         playerErrorPanel.setPadding(dp(28), dp(20), dp(28), dp(20));
         playerErrorPanel.setBackground(rounded(0xFF202126, 12));
         TextView error = text("This stream could not be played. Check the playlist or network, then retry.", 18, WHITE);
+        playerErrorText = error;
         error.setGravity(Gravity.CENTER);
         error.setMaxWidth(dp(460));
         playerErrorPanel.addView(error);
@@ -2498,7 +2826,12 @@ public class MainActivity extends Activity {
         actions.setGravity(Gravity.CENTER);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         retryPlaybackButton = button("Retry");
-        retryPlaybackButton.setOnClickListener(v -> startPlayback());
+        retryPlaybackButton.setOnClickListener(v -> {
+            failedLiveUrls.clear();
+            cancelPendingLiveSkip();
+            if (playerErrorPanel != null) playerErrorPanel.setVisibility(View.GONE);
+            startPlayback();
+        });
         retryPlaybackButton.setFocusable(true);
         retryPlaybackButton.setFocusableInTouchMode(true);
         setFocusStyle(retryPlaybackButton, RED, 6);
@@ -2892,32 +3225,130 @@ public class MainActivity extends Activity {
     }
 
     private void switchChannel(boolean next) {
-        if (entries == null || entries.isEmpty()) return;
-        
-        // Get all live entries
+        if (currentEntry == null) return;
         ArrayList<Entry> liveEntries = new ArrayList<>();
         for (Entry e : entries) {
             if ("Live".equals(e.type)) liveEntries.add(e);
         }
         if (liveEntries.isEmpty()) return;
-        
+
         // Find current index
-        int currentIndex = -1;
+        int currentIndex = 0;
         for (int i = 0; i < liveEntries.size(); i++) {
             if (liveEntries.get(i).url.equals(currentEntry.url)) {
                 currentIndex = i;
                 break;
             }
         }
-        if (currentIndex == -1) return;
-        
-        // Calculate next/prev index with wraparound
-        int newIndex = next ? (currentIndex + 1) % liveEntries.size() : (currentIndex - 1 + liveEntries.size()) % liveEntries.size();
-        Entry newEntry = liveEntries.get(newIndex);
-        
-        // Play new channel
-        play(newEntry);
-        Toast.makeText(this, newEntry.name, Toast.LENGTH_SHORT).show();
+
+        // Walk forward/backward past channels that already failed this session.
+        for (int step = 1; step <= liveEntries.size(); step++) {
+            int offset = next ? step : -step;
+            int index = ((currentIndex + offset) % liveEntries.size() + liveEntries.size()) % liveEntries.size();
+            Entry candidate = liveEntries.get(index);
+            if (failedLiveUrls.contains(candidate.url)) continue;
+            switchLiveTo(candidate, true);
+            return;
+        }
+        Toast.makeText(this, "No working live channels found", Toast.LENGTH_SHORT).show();
+    }
+
+    /** Update the custom player header when the channel changes in place. */
+    private void updatePlayerHeaderForEntry(Entry entry) {
+        if (entry == null) return;
+        if (titleText != null) titleText.setText(entry.name);
+        if (metadataText != null) metadataText.setText(buildMetadataString());
+        if (qualityBadge != null) qualityBadge.setText(inferQualityLabel(entry.url));
+        if (currentTimeText != null) currentTimeText.setText("0:00");
+        if (totalTimeText != null) totalTimeText.setText("0:00");
+        if (progressBar != null) progressBar.setProgress(0);
+    }
+
+    /**
+     * Switch live channels without rebuilding the player overlay, so there is
+     * no black flash and the controls/focus stay put.
+     */
+    private void switchLiveTo(Entry entry, boolean userInitiated) {
+        if (entry == null) return;
+        cancelPendingLiveSkip();
+        currentEntry = entry;
+        pendingResumeMs = 0;
+        updatePlayerHeaderForEntry(entry);
+        if (playerErrorPanel != null) playerErrorPanel.setVisibility(View.GONE);
+        if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.VISIBLE);
+        if (playerLoadingText != null) playerLoadingText.setText("Connecting to " + entry.name + "…");
+        if (userInitiated) Toast.makeText(this, entry.name, Toast.LENGTH_SHORT).show();
+        startPlayback();
+    }
+
+    /** Next live channel whose URL has not failed this session, or null. */
+    private Entry nextUnfailedLive(Entry from) {
+        ArrayList<Entry> live = new ArrayList<>();
+        for (Entry e : entries) {
+            if ("Live".equals(e.type)) live.add(e);
+        }
+        if (live.isEmpty()) return null;
+        int start = 0;
+        for (int i = 0; i < live.size(); i++) {
+            if (live.get(i).url.equals(from.url)) { start = i; break; }
+        }
+        for (int step = 1; step <= live.size(); step++) {
+            Entry candidate = live.get((start + step) % live.size());
+            if (!failedLiveUrls.contains(candidate.url)) return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * A live stream failed. Remember it and auto-advance to the next channel
+     * that has not failed yet. Only show the error panel (with Retry) when the
+     * whole playlist is exhausted, so the user is never stuck on a dead feed.
+     */
+    private void handlePlaybackFailure(Entry failed) {
+        if (failed == null || !"Live".equals(failed.type)) {
+            showPlaybackError();
+            return;
+        }
+        // Skipping every channel while offline would just burn through the
+        // playlist; wait for connectivity instead.
+        if (!networkAvailable) {
+            showPlaybackError("Network connection lost. Reconnect, then press Retry.");
+            return;
+        }
+        failedLiveUrls.add(failed.url);
+        Entry next = nextUnfailedLive(failed);
+        if (next == null) {
+            showPlaybackError("Every live channel failed to play. Check your connection or the playlist, then retry.");
+            return;
+        }
+        scheduleLiveSkip(failed, next);
+    }
+
+    private void scheduleLiveSkip(final Entry from, final Entry next) {
+        if (liveSkipScheduled) return;
+        liveSkipScheduled = true;
+        if (liveSkipRunnable != null) handler.removeCallbacks(liveSkipRunnable);
+        liveSkipRunnable = () -> {
+            liveSkipScheduled = false;
+            liveSkipRunnable = null;
+            if (!playing || currentEntry == null) return;
+            // The user may have switched manually while the notice was showing.
+            if (!currentEntry.url.equals(from.url)) return;
+            Toast.makeText(MainActivity.this,
+                    from.name + " unavailable — next: " + next.name,
+                    Toast.LENGTH_SHORT).show();
+            switchLiveTo(next, false);
+        };
+        if (playerErrorPanel != null) playerErrorPanel.setVisibility(View.GONE);
+        if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.VISIBLE);
+        if (playerLoadingText != null) playerLoadingText.setText("Channel unavailable. Trying " + next.name + "…");
+        if (handler != null) handler.postDelayed(liveSkipRunnable, 900);
+    }
+
+    private void cancelPendingLiveSkip() {
+        if (liveSkipRunnable != null && handler != null) handler.removeCallbacks(liveSkipRunnable);
+        liveSkipRunnable = null;
+        liveSkipScheduled = false;
     }
 
     private boolean isKannadaChannel(Entry e) {
@@ -2977,22 +3408,27 @@ public class MainActivity extends Activity {
 
             player.setHandleAudioBecomingNoisy(true);
 
+            final ExoPlayer boundPlayer = player;
             player.addListener(new Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
-                    if (player == null) return;
+                    if (player != boundPlayer) return;
                     runOnUiThread(() -> {
+                        if (player != boundPlayer || !playing) return;
+                        Entry active = currentEntry;
                         try {
                             if (state == Player.STATE_BUFFERING) {
-                                playerLoadingText.setText("Buffering " + entry.name + "…");
-                                playerLoadingPanel.setVisibility(View.VISIBLE);
+                                if (playerLoadingText != null) playerLoadingText.setText("Buffering " + (active != null ? active.name : "stream") + "…");
+                                if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.VISIBLE);
                                 isPlaying = false;
                                 updatePlayPauseUI();
                             } else if (state == Player.STATE_READY) {
-                                playerLoadingPanel.setVisibility(View.GONE);
-                                playerErrorPanel.setVisibility(View.GONE);
+                                if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.GONE);
+                                if (playerErrorPanel != null) playerErrorPanel.setVisibility(View.GONE);
+                                // A channel that finally plays is healthy again.
+                                if (active != null) failedLiveUrls.remove(active.url);
                                 // Resume an unfinished movie/episode. Position is
                                 // only meaningful once the timeline is known.
-                                if (pendingResumeMs > 0 && player != null) {
+                                if (pendingResumeMs > 0) {
                                     long resumeTarget = pendingResumeMs;
                                     pendingResumeMs = 0;
                                     player.seekTo(resumeTarget);
@@ -3001,27 +3437,37 @@ public class MainActivity extends Activity {
                                             Toast.LENGTH_SHORT).show();
                                 }
                                 long durationMs = player.getDuration();
-                                if (metadataText != null && durationMs > 0 && durationMs != Long.MAX_VALUE) {
-                                    metadataText.setText(buildMetadataString() + " · " + formatRuntime(durationMs));
+                                if (metadataText != null && active != null) {
+                                    metadataText.setText(buildMetadataString()
+                                            + (durationMs > 0 && durationMs != Long.MAX_VALUE ? " · " + formatRuntime(durationMs) : ""));
                                 }
                                 isPlaying = player.isPlaying();
                                 updatePlayPauseUI();
                                 showControls(true);
                             } else if (state == Player.STATE_ENDED) {
-                                onPlaybackEnded();
+                                if (active != null && "Live".equals(active.type)) {
+                                    handlePlaybackFailure(active);
+                                } else {
+                                    onPlaybackEnded();
+                                }
                             } else if (state == Player.STATE_IDLE && player.getPlayerError() != null) {
-                                showPlaybackError();
+                                handlePlaybackFailure(active);
                             }
                         } catch (Exception ignored) {}
                     });
                 }
 
                 @Override public void onPlayerError(PlaybackException error) {
+                    if (player != boundPlayer) return;
                     Log.e(TAG, "Playback error: " + error.getMessage(), error);
-                    runOnUiThread(() -> showPlaybackError());
+                    final Entry failed = currentEntry;
+                    runOnUiThread(() -> {
+                        if (player == boundPlayer && playing) handlePlaybackFailure(failed);
+                    });
                 }
 
                 @Override public void onIsPlayingChanged(boolean playingState) {
+                    if (player != boundPlayer) return;
                     isPlaying = playingState;
                     updatePlayPauseUI();
                     if (playingState) {
@@ -3046,7 +3492,7 @@ public class MainActivity extends Activity {
 
         } catch (Exception ex) {
             Log.e(TAG, "Error starting playback", ex);
-            showPlaybackError();
+            handlePlaybackFailure(entry);
         }
     }
 
@@ -3061,11 +3507,21 @@ public class MainActivity extends Activity {
         return null; // Let ExoPlayer infer
     }
 
+    private static final String DEFAULT_PLAYBACK_ERROR =
+            "This stream could not be played. Check the playlist or network, then retry.";
+
     private void showPlaybackError() {
+        showPlaybackError(null);
+    }
+
+    private void showPlaybackError(String message) {
         runOnUiThread(() -> {
             try {
                 if (playerLoadingPanel != null) playerLoadingPanel.setVisibility(View.GONE);
                 if (playerErrorPanel != null) {
+                    if (playerErrorText != null) {
+                        playerErrorText.setText(message == null ? DEFAULT_PLAYBACK_ERROR : message);
+                    }
                     playerErrorPanel.setVisibility(View.VISIBLE);
                     if (retryPlaybackButton != null) retryPlaybackButton.requestFocus();
                 }
@@ -3169,6 +3625,8 @@ public class MainActivity extends Activity {
     }
     @Override public void onBackPressed(){
         if (playing) {
+            cancelPendingLiveSkip();
+            failedLiveUrls.clear();
             saveCurrentPlaybackPosition(); // Save progress before exiting
             releaseWakeLock();
             cancelHideControls();
@@ -3285,6 +3743,7 @@ public class MainActivity extends Activity {
         if (timelineUpdater != null) timelineHandler.removeCallbacks(timelineUpdater);
         if (handler != null) handler.removeCallbacksAndMessages(null);
         if (hideControlsHandler != null) hideControlsHandler.removeCallbacksAndMessages(null);
+        if (splashPulse != null) splashPulse.cancel();
 
         releaseWakeLock();
         if (player != null) {
