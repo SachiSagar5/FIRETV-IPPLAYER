@@ -7,10 +7,10 @@ android {
         applicationId 'tv.sachin.streamshelf'
         minSdk 24
         targetSdk 34
-        // 14 / 1.5.1: D-pad/media seek fixes, My List saves from Movies/Live TV
-        // and from the player, immediate heart feedback on every shelf.
-        versionCode 14
-        versionName '1.5.1'
+        // 15 / 1.5.2: dashboard cards share one landscape size; sidebar, hero,
+        // grid titles and focus scaling no longer clip cards or menu labels.
+        versionCode 15
+        versionName '1.5.2'
     }
 
     /**
