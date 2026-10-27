@@ -70,6 +70,7 @@ public class MainActivity extends Activity {
         new ThreadPoolExecutor.DiscardOldestPolicy()
     );
     private ExoPlayer player; private PlayerView playerView; private FrameLayout playerOverlay; private View previousHomeFocus; private boolean playing=false;
+    private boolean favoritesChangedWhilePlaying=false;
     private long pendingResumeMs = 0;
     // See All grid focus state. The grid is a full-screen replacement content
     // view, so it needs its own focus anchor: the home screen's firstContentItem
@@ -137,7 +138,7 @@ public class MainActivity extends Activity {
             try (FileWriter fw = new FileWriter(logFile)) {
                 fw.write("StreamShelf Crash Report\n");
                 fw.write("Time: " + new Date() + "\n");
-                fw.write("Version: 1.4.2\n");
+                fw.write("Version: 1.5.1\n");
                 fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
                 fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
                 fw.write("Playing: " + playing + "\n");
@@ -768,6 +769,10 @@ public class MainActivity extends Activity {
             holder.image.setImageDrawable(null);
             holder.art.removeView(holder.liveBadge);
             holder.liveBadge = null;
+            // Pooled cards are reused for different titles. Leaving a heart
+            // behind made unsaved movies/channels look saved and hid the heart
+            // on the title that was actually just added.
+            removeFavoriteBadges(holder.art);
             holder.tile.setTag(null);
             holder.tile.setFocusable(false);
             holder.tile.setPressed(false);
@@ -1583,6 +1588,7 @@ public class MainActivity extends Activity {
                 image.setTag(e);
                 art.addView(image, new FrameLayout.LayoutParams(-1, -1));
                 placeholder.bringToFront();
+                addFavoriteBadge(art, e);
 
                 // LIVE badge
                 TextView badge = text("LIVE", 10, WHITE);
@@ -1716,20 +1722,22 @@ public class MainActivity extends Activity {
                 ? "Added " + changed + " " + noun + " to My List"
                 : "Removed " + changed + " " + noun + " from My List",
                 Toast.LENGTH_SHORT).show();
-        View focused = getCurrentFocus();
-        if (focused != null) {
+        if (!playing) {
             Episode resume = resumeEpisode(series);
-            refreshFocusedFavoriteBadge(resume != null ? resume.entry : series.episodes.get(0).entry);
-        }
-        if (category.equals("My List") || category.equals("Home") || category.equals("Series")) {
+            Entry resumeEntry = resume != null ? resume.entry : series.episodes.get(0).entry;
+            if (gridOverlayView != null) refreshFocusedFavoriteBadge(resumeEntry);
+            // Rebuild whichever shelf/tab is visible so the heart appears (or
+            // disappears) right away, then put focus back on the same show.
             refreshRows();
-            focusFirstContent();
+            if (gridOverlayView == null) focusTileAfterRefresh(series);
         }
     }
 
     /** Small heart on the artwork so "saved to My List" is visible on the card. */
     private void addFavoriteBadge(FrameLayout art, Entry entry) {
-        if (art == null || entry == null || !isFavorite(entry)) return;
+        if (art == null) return;
+        removeFavoriteBadges(art);
+        if (entry == null || !isFavorite(entry)) return;
         TextView heart = text("\u2665", 13, 0xFFFF5A78);
         heart.setTag(FAVORITE_BADGE);
         heart.setPadding(dp(6), dp(1), dp(6), dp(2));
@@ -1737,6 +1745,13 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.RIGHT);
         params.setMargins(0, dp(7), dp(7), 0);
         art.addView(heart, params);
+    }
+
+    private void removeFavoriteBadges(FrameLayout art) {
+        if (art == null) return;
+        for (int i = art.getChildCount() - 1; i >= 0; i--) {
+            if (FAVORITE_BADGE.equals(art.getChildAt(i).getTag())) art.removeViewAt(i);
+        }
     }
 
     /** Re-draw the heart on the focused card after a My List toggle. */
@@ -1748,9 +1763,6 @@ public class MainActivity extends Activity {
         View first = tile.getChildAt(0);
         if (!(first instanceof FrameLayout)) return;
         FrameLayout art = (FrameLayout) first;
-        for (int i = art.getChildCount() - 1; i >= 0; i--) {
-            if (FAVORITE_BADGE.equals(art.getChildAt(i).getTag())) art.removeViewAt(i);
-        }
         addFavoriteBadge(art, entry);
     }
 
@@ -1956,6 +1968,30 @@ public class MainActivity extends Activity {
         }
         content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});
     }
+
+    /** Find the freshly rebuilt card for a saved item/show so focus is kept. */
+    private View findTileByTag(ViewGroup parent, Object tag) {
+        if (parent == null) return null;
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            if (child.getTag() == tag && child.isFocusable()) return child;
+            if (child instanceof ViewGroup) {
+                View found = findTileByTag((ViewGroup) child, tag);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void focusTileAfterRefresh(Object tag) {
+        if (content == null) return;
+        content.post(() -> {
+            if (playing || gridOverlayView != null) return;
+            View tile = findTileByTag(content, tag);
+            if (tile != null && tile.isShown()) tile.requestFocus();
+            else focusFirstContent();
+        });
+    }
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
             int key = event.getKeyCode();
@@ -1977,6 +2013,17 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                // While watching, MENU/INFO saves the playing movie, episode or
+                // channel to My List. It used to fall through to "show controls",
+                // so the remote's option button appeared to do nothing here.
+                if (key == android.view.KeyEvent.KEYCODE_MENU
+                        || key == android.view.KeyEvent.KEYCODE_INFO) {
+                    // Repeats from a held button must not add then remove again.
+                    if (event.getRepeatCount() == 0 && currentEntry != null) toggleFavorite(currentEntry);
+                    showControls(true);
+                    return true;
+                }
+
                 // Media keys
                 if (player != null && (key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
                         || key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY
@@ -1988,29 +2035,33 @@ public class MainActivity extends Activity {
                     return true;
                 }
 
-                if (player != null && (key == android.view.KeyEvent.KEYCODE_MEDIA_REWIND
-                        || key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
-                        && player.isCurrentMediaItemSeekable()) {
-                    long position = player.getCurrentPosition();
-                    long duration = player.getDuration();
-                    long next = position + (key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
-                    player.seekTo(Math.max(0, duration > 0 ? Math.min(duration, next) : next));
-                    showControls(true);
+                if (key == android.view.KeyEvent.KEYCODE_MEDIA_REWIND
+                        || key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+                    seekRelative(key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
                     return true;
                 }
 
                 // D-pad navigation for custom player controls
-                if (key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                if ((key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
                         || key == android.view.KeyEvent.KEYCODE_ENTER
-                        || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                    // Show controls if hidden, otherwise click focused view
+                        || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
+                        && event.getRepeatCount() == 0) {
                     if (!controlsVisible) {
                         showControls(true);
                     } else {
                         View focused = getCurrentFocus();
-                        if (focused != null && focused.isClickable()) {
+                        if (focused == progressBar && player != null) {
+                            // OK on the timeline is play/pause, like most TV
+                            // players, instead of a click the SeekBar ignores.
+                            togglePlayPause();
+                        } else if (focused != null && focused.isShown() && focused.isClickable()) {
                             focused.performClick();
+                        } else if (centerPlayPauseBtn != null) {
+                            // Focus can be dropped when the controls finish hiding;
+                            // give the remote something to click again.
+                            centerPlayPauseBtn.requestFocus();
                         }
+                        scheduleHideControls();
                     }
                     return true;
                 }
@@ -2021,26 +2072,44 @@ public class MainActivity extends Activity {
                         showControls(true);
                         return true;
                     }
+                    // The error panel only has two buttons; keep the remote on them
+                    // instead of switching live channels behind the dialog.
+                    if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
+                        if (getCurrentFocus() == retryPlaybackButton) browseBtn.requestFocus();
+                        else retryPlaybackButton.requestFocus();
+                        return true;
+                    }
                     // For live TV, Up/Down switches channels (prev/next) regardless of focus
                     if (currentEntry != null && "Live".equals(currentEntry.type)) {
                         switchChannel(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
                         return true;
                     }
                     handleVerticalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+                    scheduleHideControls();
                     return true;
                 }
 
                 // D-pad Left/Right: seek when timeline focused, otherwise navigate between controls
                 if (key == android.view.KeyEvent.KEYCODE_DPAD_LEFT || key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    boolean forward = key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT;
                     if (!controlsVisible) {
-                        showControls(true);
+                        // With the controls hidden, treat Left/Right as a direct
+                        // 10-second skip for movies/episodes. It used to only
+                        // reveal the controls, so Forward looked broken.
+                        if (currentEntry != null && !"Live".equals(currentEntry.type)) {
+                            seekRelative(forward ? 10000 : -10000);
+                            // Keep focus on the timeline, not the center button,
+                            // so tapping Right again keeps skipping instead of
+                            // only moving the highlight to Forward.
+                            if (progressBar != null && progressBar.isShown()) {
+                                progressBar.post(progressBar::requestFocus);
+                            }
+                        } else {
+                            showControls(true);
+                        }
                         return true;
                     }
                     View focused = getCurrentFocus();
-                    if (focused == progressBar) {
-                        // Seeking handled by SeekBar's internal key handling
-                        return false; // Let SeekBar handle it
-                    }
                     // Handle error panel navigation
                     if (playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
                         if (focused == retryPlaybackButton) {
@@ -2050,23 +2119,16 @@ public class MainActivity extends Activity {
                         }
                         return true;
                     }
-                    handleHorizontalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
-                    return true;
-                }
-
-                // D-pad Up/Down on error panel
-                if ((key == android.view.KeyEvent.KEYCODE_DPAD_UP || key == android.view.KeyEvent.KEYCODE_DPAD_DOWN)
-                        && playerErrorPanel != null && playerErrorPanel.getVisibility() == View.VISIBLE) {
-                    View focused = getCurrentFocus();
-                    if (focused == retryPlaybackButton || focused == browseBtn) {
-                        // Toggle between the two buttons
-                        if (focused == retryPlaybackButton) {
-                            browseBtn.requestFocus();
-                        } else {
-                            retryPlaybackButton.requestFocus();
-                        }
+                    if (focused == progressBar) {
+                        // SeekBar's own key handling only moves the thumb and never
+                        // calls seekTo(), so D-pad seeking on the timeline did
+                        // nothing. Seek 10s per press like the on-screen buttons.
+                        seekRelative(key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT ? 10000 : -10000);
                         return true;
                     }
+                    handleHorizontalNavigation(key == android.view.KeyEvent.KEYCODE_DPAD_RIGHT);
+                    scheduleHideControls();
+                    return true;
                 }
 
                 // Any other key while playing: show controls
@@ -2089,6 +2151,9 @@ public class MainActivity extends Activity {
             }
             if (!playing && (key == android.view.KeyEvent.KEYCODE_MENU
                     || key == android.view.KeyEvent.KEYCODE_INFO)) {
+                // A held button sends repeated DOWN events; toggling on each one
+                // would add and then instantly remove the title.
+                if (event.getRepeatCount() > 0) return true;
                 // Only the card itself carries the tag, and the remote can land
                 // focus on any child view of it, so walk outwards instead of
                 // reading one level. Getting this wrong sent every other press
@@ -2120,7 +2185,8 @@ public class MainActivity extends Activity {
             // Handle DPAD_CENTER/ENTER for clickable views in non-playing state (e.g., "See All" buttons)
             if (!playing && (key == android.view.KeyEvent.KEYCODE_DPAD_CENTER
                     || key == android.view.KeyEvent.KEYCODE_ENTER
-                    || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                    || key == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)
+                    && event.getRepeatCount() == 0) {
                 View focused = getCurrentFocus();
                 if (focused != null && focused.isClickable()) {
                     focused.performClick();
@@ -2199,6 +2265,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean isBottomControl(View v) {
+        if (v == null || controlOrder == null) return false;
         for (View ctrl : controlOrder) {
             if (ctrl == v) return true;
         }
@@ -2237,10 +2304,11 @@ public class MainActivity extends Activity {
         } else if (focused == settingsBtn) {
             if (!right) ccBtn.requestFocus();
         } else if (focused == centerPlayPauseBtn) {
-            // Center button - go to bottom controls
-            if (controlOrder.length > 0) {
-                controlOrder[0].requestFocus();
-            }
+            // From the big center button, Right should land on Forward and Left
+            // on Rewind, so seeking is two presses away instead of four.
+            if (right && forwardBtn != null) forwardBtn.requestFocus();
+            else if (!right && rewindBtn != null) rewindBtn.requestFocus();
+            else if (controlOrder.length > 0) controlOrder[0].requestFocus();
         }
     }
     private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);seriesIndexCache=null;seriesIndexCacheSize=-1;status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);refreshRows();if(parsed.isEmpty()&&err==null)status.setText("No playable entries found. Check the M3U format and URLs.");});});}
@@ -2283,6 +2351,9 @@ public class MainActivity extends Activity {
             playerOverlay = new FrameLayout(this);
             playerOverlay.setBackgroundColor(Color.BLACK);
             playerOverlay.setAlpha(0f);
+            // Acts as the focus holder while the custom controls are hidden.
+            playerOverlay.setFocusable(true);
+            playerOverlay.setFocusableInTouchMode(true);
 
             playerView = new PlayerView(this);
             playerView.setUseController(false); // Disable default controller - we use custom
@@ -2877,7 +2948,9 @@ public class MainActivity extends Activity {
     }
 
     private void showControls(boolean show) {
+        boolean wasVisible = controlsVisible;
         controlsVisible = show;
+        if (topBar == null || centerControls == null || timelineContainer == null || bottomControls == null) return;
         if (show) {
             topBar.animate().alpha(1f).setDuration(300).start();
             centerControls.setVisibility(View.VISIBLE);
@@ -2885,12 +2958,35 @@ public class MainActivity extends Activity {
             timelineContainer.animate().alpha(1f).setDuration(300).start();
             bottomControls.setVisibility(View.VISIBLE);
             bottomControls.animate().alpha(1f).setDuration(300).start();
+            // Hiding the controls drops focus. Restore it when they come back,
+            // otherwise OK does nothing and Right cannot reach Forward.
+            if ((!wasVisible || getCurrentFocus() == null) && centerPlayPauseBtn != null) {
+                centerPlayPauseBtn.post(() -> {
+                    if (playing && controlsVisible && centerPlayPauseBtn != null
+                            && centerPlayPauseBtn.getVisibility() == View.VISIBLE) {
+                        centerPlayPauseBtn.requestFocus();
+                    }
+                });
+            }
             scheduleHideControls();
         } else {
             topBar.animate().alpha(0f).setDuration(300).start();
             centerControls.animate().alpha(0f).setDuration(300).withEndAction(() -> centerControls.setVisibility(View.GONE)).start();
             timelineContainer.animate().alpha(0f).setDuration(300).start();
             bottomControls.animate().alpha(0f).setDuration(300).withEndAction(() -> bottomControls.setVisibility(View.GONE)).start();
+            // Do not leave focus on a view that is about to be GONE.
+            View focused = getCurrentFocus();
+            if (playerOverlay != null && (focused == backBtn || focused == ccBtn || focused == settingsBtn
+                    || focused == progressBar || focused == centerPlayPauseBtn || isBottomControl(focused))) {
+                // Focus the overlay itself (not a child) while the controls are
+                // hidden; showControls(true) then restores focus to the center.
+                int previous = playerOverlay.getDescendantFocusability();
+                playerOverlay.setFocusable(true);
+                playerOverlay.setFocusableInTouchMode(true);
+                playerOverlay.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+                playerOverlay.requestFocus();
+                playerOverlay.setDescendantFocusability(previous);
+            }
             cancelHideControls();
         }
     }
@@ -2946,10 +3042,32 @@ public class MainActivity extends Activity {
 
     private void seekRelative(long ms) {
         if (player == null) return;
-        long newPos = Math.max(0, Math.min(player.getDuration(), player.getCurrentPosition() + ms));
-        player.seekTo(newPos);
-        cancelHideControls();
-        scheduleHideControls();
+        if (!player.isCurrentMediaItemSeekable()) {
+            Toast.makeText(this, "This stream cannot be skipped", Toast.LENGTH_SHORT).show();
+            showControls(true);
+            return;
+        }
+        long duration = player.getDuration();
+        long target = player.getCurrentPosition() + ms;
+        if (target < 0) target = 0;
+        // C.TIME_UNSET is negative, so only clamp when the duration is known.
+        // Clamping against an unknown duration used to send Forward to 0:00.
+        if (duration > 0 && target > duration) target = duration;
+        player.seekTo(target);
+        updateTimelinePosition(target);
+        showControls(true);
+    }
+
+    /** Move the timeline immediately after a seek instead of waiting a tick. */
+    private void updateTimelinePosition(long position) {
+        if (player == null || progressBar == null) return;
+        long duration = player.getDuration();
+        if (duration > 0 && duration != Long.MAX_VALUE) {
+            int progress = (int) Math.max(0, Math.min(10000L, position * 10000L / duration));
+            progressBar.setProgress(progress);
+            if (totalTimeText != null) totalTimeText.setText(formatTime(duration));
+        }
+        if (currentTimeText != null) currentTimeText.setText(formatTime(position));
     }
 
     private void switchChannel(boolean next) {
@@ -3245,6 +3363,12 @@ public class MainActivity extends Activity {
             isPlaying = false;
             currentEntry = null;
             setContentView(root);
+            // A MENU press during playback saved the title without rebuilding the
+            // home screen (it was detached). Refresh it now so the heart shows.
+            if (favoritesChangedWhilePlaying) {
+                favoritesChangedWhilePlaying = false;
+                refreshRows();
+            }
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(140).withEndAction(() -> {
                 if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
@@ -3274,8 +3398,27 @@ public class MainActivity extends Activity {
     }
 
     private void loadFavorites(){Set<String> saved=getPreferences(0).getStringSet("favorites",Collections.emptySet());favoriteKeys.addAll(saved);}
+    private void saveFavorites(){getPreferences(0).edit().putStringSet("favorites",new HashSet<>(favoriteKeys)).apply();}
     private boolean isFavorite(Entry e){try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}}
-    private void toggleFavorite(Entry e){try{String key=sha256(e.url);if(favoriteKeys.contains(key)){favoriteKeys.remove(key);Toast.makeText(this,"Removed from My List",Toast.LENGTH_SHORT).show();}else{favoriteKeys.add(key);Toast.makeText(this,"Added to My List",Toast.LENGTH_SHORT).show();}getPreferences(0).edit().putStringSet("favorites",new HashSet<>(favoriteKeys)).apply();if(gridOverlayView!=null)refreshFocusedFavoriteBadge(e);if(category.equals("My List")||category.equals("Home")){refreshRows();focusFirstContent();}}catch(Exception ignored){Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();}}
+    private void toggleFavorite(Entry e){
+        if(e==null)return;
+        try{
+            String key=sha256(e.url);
+            boolean add=!favoriteKeys.contains(key);
+            if(add)favoriteKeys.add(key);else favoriteKeys.remove(key);
+            saveFavorites();
+            Toast.makeText(this,add?"Added to My List":"Removed from My List",Toast.LENGTH_SHORT).show();
+            // While a stream is playing the home screen is not attached, so the
+            // rebuild waits until playback closes. The key is already saved.
+            if(playing){favoritesChangedWhilePlaying=true;return;}
+            if(gridOverlayView!=null)refreshFocusedFavoriteBadge(e);
+            // Rebuild the visible shelf/tab in every category so the heart is
+            // correct immediately. Saving from Movies or Live TV used to leave
+            // the card unchanged, which looked like the save had failed.
+            refreshRows();
+            if(gridOverlayView==null)focusTileAfterRefresh(e);
+        }catch(Exception ignored){Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();}
+    }
     private void loadSources(){try{String raw=getPreferences(0).getString("sources_enc",null);if(raw==null)return;byte[] all=Base64.decode(raw,Base64.NO_WRAP);int n=((all[0]&255)<<8)|(all[1]&255);byte[] iv=Arrays.copyOfRange(all,2,2+n),cipher=Arrays.copyOfRange(all,2+n,all.length);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,secretKey(),new GCMParameterSpec(128,iv));JSONArray a=new JSONArray(new String(c.doFinal(cipher),StandardCharsets.UTF_8));for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);sources.add(new Source(o.getString("name"),o.getString("url")));}activeSource=Math.min(getPreferences(0).getInt("active",0),Math.max(0,sources.size()-1));}catch(Exception ignored){sources.clear();}}
     private void saveSources(){try{JSONArray a=new JSONArray();for(Source s:sources){JSONObject o=new JSONObject();o.put("name",s.name);o.put("url",s.url);a.put(o);}Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,secretKey());byte[] iv=c.getIV(),data=c.doFinal(a.toString().getBytes(StandardCharsets.UTF_8));byte[] out=new byte[2+iv.length+data.length];out[0]=(byte)(iv.length>>8);out[1]=(byte)iv.length;System.arraycopy(iv,0,out,2,iv.length);System.arraycopy(data,0,out,2+iv.length,data.length);getPreferences(0).edit().putString("sources_enc",Base64.encodeToString(out,Base64.NO_WRAP)).putInt("active",activeSource).apply();}catch(Exception e){status.setText("Could not securely save playlist URLs.");}}
     private javax.crypto.SecretKey secretKey() throws Exception {KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);String alias="StreamShelfKey";if(ks.containsAlias(alias))return (javax.crypto.SecretKey)ks.getKey(alias,null);KeyGenerator g=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");g.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());return g.generateKey();}
