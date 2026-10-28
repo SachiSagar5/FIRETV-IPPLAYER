@@ -22,8 +22,19 @@ android {
         // 21 / 1.6.5: My List keeps a saved snapshot so titles survive playlist
         // URL rotation, and the player's quality placeholder is replaced by
         // working multi-track audio selection.
-        versionCode 21
-        versionName '1.6.5'
+        // 22 / 1.6.6: Saving to My List no longer rebuilds the whole screen (it
+        // repaints the heart and only rebuilds My List/Series), favourite keys
+        // are cached, and any error while saving or drawing is caught, logged
+        // and shown inline instead of closing the app. Section dividers now
+        // keep their 1dp height, so a short My List no longer collapses into a
+        // blank screen after removing a title.
+        // 23 / 1.6.6: same code, new versionCode. Android caches a package's
+        // launcher icon per (package, version), so phones and Fire TV that
+        // already installed 1.6.6 would keep showing the old, stretched banner
+        // icon after updating. A new versionCode forces the icon cache to be
+        // rebuilt, and the app now ships a real square launcher icon.
+        versionCode 23
+        versionName '1.6.6'
     }
 
     /**

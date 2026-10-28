@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <application android:theme="@style/AppTheme" android:label="StreamShelf" android:icon="@drawable/streamshelf_icon_1280x720" android:roundIcon="@mipmap/ic_launcher" android:banner="@drawable/streamshelf_icon_1280x720" android:usesCleartextTraffic="true" android:allowBackup="false" android:hardwareAccelerated="true" android:largeHeap="true">
+    <application android:theme="@style/AppTheme" android:label="StreamShelf" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:banner="@drawable/streamshelf_icon_1280x720" android:usesCleartextTraffic="true" android:allowBackup="false" android:hardwareAccelerated="true" android:largeHeap="true">
         <activity android:name=".MainActivity" android:banner="@drawable/streamshelf_icon_1280x720" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:screenOrientation="landscape" android:exported="true" android:resizeableActivity="false" android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

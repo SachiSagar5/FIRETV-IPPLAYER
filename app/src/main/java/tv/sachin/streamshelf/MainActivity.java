@@ -135,7 +135,12 @@ public class MainActivity extends Activity {
     private String playlistError;
 
     private static class Source { String name,url; Source(String n,String u){name=n;url=u;} }
-    private static class Entry { String name,url,group,logo,type; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
+    /**
+     * urlHash is the legacy favourite identity (SHA-256 of the stream URL).
+     * It is computed once and cached: My List used to re-hash every playlist
+     * entry (thousands of them) on each save, which is wasted work on a TV box.
+     */
+    private static class Entry { String name,url,group,logo,type; String urlHash; String favoriteKeyCache; Entry(String n,String u,String g,String l,String t){name=n;url=u;group=g;logo=l;type=t;} }
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -187,7 +192,7 @@ public class MainActivity extends Activity {
             try (FileWriter fw = new FileWriter(logFile)) {
                 fw.write("StreamShelf Crash Report\n");
                 fw.write("Time: " + new Date() + "\n");
-                fw.write("Version: 1.6.5\n");
+                fw.write("Version: 1.6.6\n");
                 fw.write("Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n");
                 fw.write("Device: " + Build.MANUFACTURER + " " + Build.MODEL + "\n");
                 fw.write("Playing: " + playing + "\n");
@@ -315,7 +320,33 @@ public class MainActivity extends Activity {
     }
     private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",27,WHITE);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Connect a playlist to start building your home screen.",16,MUTED);content.addView(sub);Button b=button("Add playlist");b.setId(View.generateViewId());b.setOnClickListener(v->sourceDialog());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(54));p.setMargins(0,dp(18),0,0);content.addView(b,p);firstContentItem=b;dismissSplash();}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
-    private void refreshRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
+    /**
+     * Rebuilds the visible tab. Building a screen touches thousands of playlist
+     * entries, so a single bad title must not close the app: anything that
+     * escapes is logged and replaced with an inline message instead.
+     */
+    private void refreshRows(){
+        try{
+            buildRows();
+        }catch(Throwable t){
+            reportRecoveredError("building the screen",t);
+            try{
+                content.animate().cancel();
+                content.removeAllViews();
+                shelfRows.clear();
+                TextView problem=text("Could not show this section. Press Back and open it again.",18,MUTED);
+                problem.setPadding(0,dp(22),0,0);
+                problem.setFocusable(true);
+                problem.setId(View.generateViewId());
+                content.addView(problem);
+                firstContentItem=problem;
+                wireMainFocus();
+                animateContentIn();
+            }catch(Throwable ignored){}
+        }
+    }
+
+    private void buildRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
         // Series are grouped by show, not listed episode by episode.
         if(category.equals("Series")){renderSeriesCategory();wireMainFocus();animateContentIn();return;}
@@ -323,7 +354,8 @@ public class MainActivity extends Activity {
         if(category.equals("My List")){
             shown.addAll(myListEntries());
         }else{
-            for(Entry e:entries)if(e.type.equals(category.equals("Live TV")?"Live":category))shown.add(e);
+            String wanted=category.equals("Live TV")?"Live":category;
+            for(Entry e:entries)if(wanted.equals(e.type))shown.add(e);
         }
         // Sort Live TV: Kannada channels first
         if (category.equals("Live TV")) {
@@ -345,9 +377,10 @@ public class MainActivity extends Activity {
         // Category icons for group headers - use vector drawables
         int catIconRes = 0;
         int catIconColor = WHITE;
-        if (category.equals("Movies") || (shown.size() > 0 && shown.get(0).type.equals("Movies"))) { catIconRes = R.drawable.ic_movies; catIconColor = 0xFFE50914; }
-        else if (category.equals("Series") || (shown.size() > 0 && shown.get(0).type.equals("Series"))) { catIconRes = R.drawable.ic_series; catIconColor = 0xFF9C27B0; }
-        else if (category.equals("Live TV") || (shown.size() > 0 && shown.get(0).type.equals("Live"))) { catIconRes = R.drawable.ic_live_tv; catIconColor = 0xFF4CAF50; }
+        String firstType=shown.get(0).type==null?"":shown.get(0).type;
+        if (category.equals("Movies") || (shown.size() > 0 && firstType.equals("Movies"))) { catIconRes = R.drawable.ic_movies; catIconColor = 0xFFE50914; }
+        else if (category.equals("Series") || (shown.size() > 0 && firstType.equals("Series"))) { catIconRes = R.drawable.ic_series; catIconColor = 0xFF9C27B0; }
+        else if (category.equals("Live TV") || (shown.size() > 0 && firstType.equals("Live"))) { catIconRes = R.drawable.ic_live_tv; catIconColor = 0xFF4CAF50; }
         else if (category.equals("My List")) { catIconRes = R.drawable.ic_my_list; catIconColor = 0xFFE91E63; }
 
         boolean portrait=category.equals("Movies")||category.equals("Series");
@@ -392,7 +425,7 @@ public class MainActivity extends Activity {
             divider.setBackgroundColor(0xFF1A1A2E);
             LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
             divParams.setMargins(0, dp(4), 0, dp(8));
-            content.addView(divider);
+            content.addView(divider,divParams);
 
             HorizontalScrollView hsv = createShelfScroll();
             LinearLayout row = (LinearLayout) hsv.getChildAt(0);
@@ -682,7 +715,7 @@ public class MainActivity extends Activity {
         divider.setBackgroundColor(0xFF1A1A2E);
         LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
         divParams.setMargins(0, dp(4), 0, dp(8));
-        content.addView(divider);
+        content.addView(divider,divParams);
 
         HorizontalScrollView hsv = createShelfScroll();
         LinearLayout row = (LinearLayout) hsv.getChildAt(0);
@@ -743,7 +776,7 @@ public class MainActivity extends Activity {
             divider.setBackgroundColor(0xFF1A1A2E);
             LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
             divParams.setMargins(0, dp(4), 0, dp(8));
-            content.addView(divider);
+            content.addView(divider,divParams);
 
             HorizontalScrollView hsv = createShelfScroll();
             LinearLayout row = (LinearLayout) hsv.getChildAt(0);
@@ -766,6 +799,19 @@ public class MainActivity extends Activity {
         if(entries.isEmpty()){View loading=playlistError!=null?text("Could not load this playlist.\n"+playlistError,16,MUTED):loadingBlock("Loading your playlist");if(loading instanceof TextView)((TextView)loading).setPadding(dp(4),dp(12),0,dp(10));content.addView(loading);}
     }
 
+    /** The title behind the newest resume entry, or null when nothing was watched. */
+    private Entry mostRecentlyWatchedEntry() {
+        ArrayList<JSONObject> recent = getRecentProgress(1);
+        if (recent == null || recent.isEmpty()) return null;
+        try {
+            String name = recent.get(0).getString("name");
+            for (Entry e : entries) {
+                if (e.name != null && e.name.equals(name)) return e;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     private Entry featuredEntry(){
         // Priority: 1) Recently watched with progress, 2) Movies, 3) Series, 4) First entry
         ArrayList<JSONObject> recent = getRecentProgress(1);
@@ -777,8 +823,8 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) {}
         }
-        for(Entry e:entries)if(e.type.equals("Movies"))return e;
-        for(Entry e:entries)if(e.type.equals("Series"))return e;
+        for(Entry e:entries)if("Movies".equals(e.type))return e;
+        for(Entry e:entries)if("Series".equals(e.type))return e;
         return entries.isEmpty()?null:entries.get(0);
     }
 
@@ -1200,7 +1246,10 @@ public class MainActivity extends Activity {
             
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_HORIZONTAL);
+            // Keep every row on the same left grid line. Centring a short last
+            // row made those posters float in the middle of the screen and
+            // broke the columns above them.
+            row.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
             LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
             rowParams.setMargins(0, 0, 0, dp(16));
             gridContainer.addView(row, rowParams);
@@ -1442,7 +1491,7 @@ public class MainActivity extends Activity {
                 badgeText = "▶  CONTINUE WATCHING";
                 badgeColor = 0xFFFFB300;
             } else {
-                badgeText = e.type.equals("Live") ? "LIVE TV" : e.type.toUpperCase(Locale.ROOT);
+                badgeText = "Live".equals(e.type) ? "LIVE TV" : (e.type==null?"":e.type.toUpperCase(Locale.ROOT));
                 badgeColor = RED;
             }
         }
@@ -1525,7 +1574,7 @@ public class MainActivity extends Activity {
         if(firstContentItem==null)firstContentItem=watch;
         return hero;
     }
-    private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(e.type.equals(type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;
+    private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(type.equals(e.type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;
         if(type.equals("Live")){
             shelf.sort((a,b)->{boolean aK=isKannadaChannel(a),bK=isKannadaChannel(b);if(aK&&!bK)return -1;if(!aK&&bK)return 1;return 0;});
         }
@@ -1581,7 +1630,7 @@ public class MainActivity extends Activity {
         divider.setBackgroundColor(0xFF1A1A2E);
         LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
         divParams.setMargins(0, dp(4), 0, dp(8));
-        content.addView(divider);
+        content.addView(divider,divParams);
 
         HorizontalScrollView hsv = createShelfScroll();
         LinearLayout row = (LinearLayout) hsv.getChildAt(0);
@@ -1636,29 +1685,40 @@ public class MainActivity extends Activity {
      */
     private void toggleSeriesFavorite(Series series) {
         if (series == null || series.episodes.isEmpty()) return;
-        boolean anySaved = false;
-        for (Episode ep : series.episodes) {
-            if (isFavorite(ep.entry)) { anySaved = true; break; }
-        }
-        boolean add = !anySaved;
         int changed = 0;
-        for (Episode ep : series.episodes) {
-            if (setFavorite(ep.entry, add, false)) changed++;
+        boolean add;
+        try {
+            boolean anySaved = false;
+            for (Episode ep : series.episodes) {
+                if (isFavorite(ep.entry)) { anySaved = true; break; }
+            }
+            add = !anySaved;
+            for (Episode ep : series.episodes) {
+                if (setFavorite(ep.entry, add, false)) changed++;
+            }
+            if (changed > 0) saveFavorites();
+        } catch (Throwable t) {
+            reportRecoveredError("saving a show to My List", t);
+            Toast.makeText(this, "Could not update My List", Toast.LENGTH_SHORT).show();
+            return;
         }
-        if (changed > 0) saveFavorites();
         String noun = changed == 1 ? "episode" : "episodes";
         Toast.makeText(this, add
                 ? "Added " + changed + " " + noun + " to My List"
                 : "Removed " + changed + " " + noun + " from My List",
                 Toast.LENGTH_SHORT).show();
-        if (!playing) {
+        if (playing) {
+            favoritesChangedWhilePlaying = true;
+            return;
+        }
+        try {
             Episode resume = resumeEpisode(series);
             Entry resumeEntry = resume != null ? resume.entry : series.episodes.get(0).entry;
-            if (gridOverlayView != null) refreshFocusedFavoriteBadge(resumeEntry);
             // Rebuild whichever shelf/tab is visible so the heart appears (or
             // disappears) right away, then put focus back on the same show.
-            refreshRows();
-            if (gridOverlayView == null) focusTileAfterRefresh(series);
+            refreshAfterFavoriteChange(series, resumeEntry);
+        } catch (Throwable t) {
+            reportRecoveredError("showing the show save", t);
         }
     }
 
@@ -2183,7 +2243,17 @@ public class MainActivity extends Activity {
             if (getCurrentFocus() == null && firstGridItem != null) firstGridItem.requestFocus();
             return;
         }
-        content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();});
+        content.post(()->{if(firstContentItem!=null)firstContentItem.requestFocus();else if(searchControl!=null)searchControl.requestFocus();
+            // A rebuilt screen can still be mid-layout on the frame this runs in,
+            // which made focus fall back to the sidebar after a card disappeared.
+            // One retry after layout keeps the remote inside the content area.
+            content.postDelayed(()->{
+                if(playing||gridOverlayView!=null)return;
+                View focused=getCurrentFocus();
+                if(firstContentItem==null||isInsideView(focused,content))return;
+                if(firstContentItem.isShown())firstContentItem.requestFocus();
+            },90);
+        });
     }
 
     /** Find the freshly rebuilt card for a saved item/show so focus is kept. */
@@ -2255,6 +2325,37 @@ public class MainActivity extends Activity {
                 if (key == android.view.KeyEvent.KEYCODE_MEDIA_REWIND
                         || key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
                     seekRelative(key == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 10000 : -10000);
+                    return true;
+                }
+
+                // Dedicated subtitle / audio-track / settings keys exist on TV
+                // and CEC remotes. They used to fall through to "any other key"
+                // and only revealed the controls, so the buttons appeared dead.
+                if (key == android.view.KeyEvent.KEYCODE_CAPTIONS) {
+                    showSubtitleDialog();
+                    return true;
+                }
+                if (key == android.view.KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK) {
+                    showAudioDialog();
+                    return true;
+                }
+                if (key == android.view.KeyEvent.KEYCODE_SETTINGS) {
+                    showPlayerSettingsDialog();
+                    return true;
+                }
+                if (key == android.view.KeyEvent.KEYCODE_MEDIA_STOP) {
+                    onBackPressed();
+                    return true;
+                }
+                if (key == android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+                        || key == android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                        || key == android.view.KeyEvent.KEYCODE_LAST_CHANNEL) {
+                    boolean next = key != android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS;
+                    if (currentEntry != null && "Live".equals(currentEntry.type)) {
+                        switchChannel(next);
+                    } else {
+                        showControls(true);
+                    }
                     return true;
                 }
 
@@ -2398,6 +2499,32 @@ public class MainActivity extends Activity {
                     toggleFavorite(entry);
                     return true;
                 }
+                // Inside the See All grid MENU on the Back button must not open
+                // the playlist dialog on top of the grid.
+                if (gridOverlayView != null) return true;
+                try {
+                    sourceDialog();
+                } catch (Throwable t) {
+                    reportRecoveredError("opening playlist sources", t);
+                }
+                return true;
+            }
+            // The play key on a TV remote should resume what was last watched
+            // instead of being swallowed by the activity.
+            if (!playing && event.getRepeatCount() == 0
+                    && (key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                    || key == android.view.KeyEvent.KEYCODE_MEDIA_PLAY)) {
+                Entry resume = mostRecentlyWatchedEntry();
+                // Nothing in the resume list yet (fresh install or only live
+                // channels watched): fall back to the featured title so the
+                // remote's Play button always starts something.
+                if (resume == null && gridOverlayView == null) resume = featuredEntry();
+                if (resume != null) {
+                    play(resume);
+                    return true;
+                }
+            }
+            if (!playing && key == android.view.KeyEvent.KEYCODE_SETTINGS) {
                 sourceDialog();
                 return true;
             }
@@ -2780,7 +2907,7 @@ public class MainActivity extends Activity {
         timelineContainer = new LinearLayout(this);
         timelineContainer.setOrientation(LinearLayout.HORIZONTAL);
         timelineContainer.setGravity(Gravity.CENTER_VERTICAL);
-        timelineContainer.setPadding(dp(48), 0, dp(48), 0);
+        timelineContainer.setPadding(dp(24), 0, dp(24), 0);
         // Bottom gradient overlay
         GradientDrawable bottomGradient = new GradientDrawable(
             GradientDrawable.Orientation.BOTTOM_TOP,
@@ -2853,22 +2980,23 @@ public class MainActivity extends Activity {
         bottomControls.setPadding(dp(24), dp(8), dp(24), dp(4));
         bottomControls.setBackground(bottomGradient);
 
-        // Create control buttons with labels
-        rewindBtn = createControlButton(R.drawable.ic_rewind, "10s\nRewind", "Rewind 10 seconds");
+        // Create control buttons with labels. Every cell keeps the same
+        // structure (icon above a single-line label) so the six controls sit on
+        // one horizontal line; mixing one- and two-line labels pushed "Pause"
+        // and "Fullscreen" down relative to the others.
+        rewindBtn = createControlButton(R.drawable.ic_rewind, "Rewind 10s", "Rewind 10 seconds");
         playPauseBtn = createControlButton(R.drawable.ic_pause, "Pause", "Pause");
-        forwardBtn = createControlButton(R.drawable.ic_forward, "10s\nForward", "Forward 10 seconds");
-        subtitlesBtn = createControlButton(R.drawable.ic_subtitles, "Subtitles\nOff", "Subtitles: Off");
+        forwardBtn = createControlButton(R.drawable.ic_forward, "Forward 10s", "Forward 10 seconds");
+        subtitlesBtn = createControlButton(R.drawable.ic_subtitles, "Subtitles Off", "Subtitles: Off");
         // Audio track selection replaces the old placeholder "Video quality"
         // control: streams usually expose several audio renditions (languages,
         // 5.1 vs stereo) and those are actually switchable through ExoPlayer.
-        audioBtn = createControlButton(R.drawable.ic_audio, "Audio\nAuto", "Audio: Auto");
-        audioBtn.setMaxLines(2);
-        audioBtn.setEllipsize(TextUtils.TruncateAt.END);
+        audioBtn = createControlButton(R.drawable.ic_audio, "Audio Auto", "Audio: Auto");
         fullscreenBtn = createControlButton(R.drawable.ic_fullscreen, "Fullscreen", "Fullscreen");
 
         TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn};
         for (TextView control : controls) {
-            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(60), 1);
+            LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(64), 1);
             bottomControls.addView(control, controlParams);
         }
 
@@ -3000,10 +3128,14 @@ public class MainActivity extends Activity {
         btn.setText(label);
         btn.setTextColor(0xFFE0E0E0);
         btn.setTextSize(13);
-        btn.setGravity(Gravity.CENTER_VERTICAL);
-        btn.setCompoundDrawablesWithIntrinsicBounds(iconResId, 0, 0, 0);
-        btn.setCompoundDrawablePadding(dp(14));
-        btn.setPadding(dp(10), dp(8), dp(6), dp(8));
+        btn.setSingleLine(true);
+        btn.setEllipsize(TextUtils.TruncateAt.END);
+        // Icon above the label, both centred in the cell: identical geometry for
+        // every control regardless of how long its label is.
+        btn.setGravity(Gravity.CENTER);
+        btn.setCompoundDrawablesWithIntrinsicBounds(0, iconResId, 0, 0);
+        btn.setCompoundDrawablePadding(dp(5));
+        btn.setPadding(dp(8), dp(4), dp(8), dp(4));
         btn.setFocusable(true);
         btn.setClickable(true);
         btn.setContentDescription(desc);
@@ -3268,7 +3400,7 @@ public class MainActivity extends Activity {
     private void updatePlayPauseUI() {
         if (playPauseBtn != null) {
             playPauseBtn.setText(isPlaying ? "Pause" : "Play");
-            playPauseBtn.setCompoundDrawablesWithIntrinsicBounds(isPlaying ? R.drawable.ic_pause : R.drawable.ic_play, 0, 0, 0);
+            playPauseBtn.setCompoundDrawablesWithIntrinsicBounds(0, isPlaying ? R.drawable.ic_pause : R.drawable.ic_play, 0, 0);
             playPauseBtn.setContentDescription(isPlaying ? "Pause" : "Play");
         }
         if (centerPlayPauseBtn != null) {
@@ -3520,7 +3652,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {}
         }
         String shortLabel = label.length() > 16 ? label.substring(0, 15) + "…" : label;
-        audioBtn.setText("Audio\n" + shortLabel);
+        audioBtn.setText("Audio " + shortLabel);
         String desc = "Audio: " + label;
         audioBtn.setContentDescription(desc);
         audioBtn.setTag(desc);
@@ -3886,7 +4018,11 @@ public class MainActivity extends Activity {
             // home screen (it was detached). Refresh it now so the heart shows.
             if (favoritesChangedWhilePlaying) {
                 favoritesChangedWhilePlaying = false;
-                refreshRows();
+                try {
+                    refreshRows();
+                } catch (Throwable t) {
+                    reportRecoveredError("rebuilding the home screen after playback", t);
+                }
             }
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(140).withEndAction(() -> {
@@ -3920,12 +4056,14 @@ public class MainActivity extends Activity {
     /** Stable identity for a saved title, so expiring URL tokens cannot hide it. */
     private String favoriteKey(Entry e) {
         if (e == null) return "";
+        if (e.favoriteKeyCache != null) return e.favoriteKeyCache;
         try {
             String type = e.type == null ? "" : e.type.trim();
             String group = e.group == null ? "" : e.group.trim();
             String name = e.name == null ? "" : e.name.trim().toLowerCase(Locale.ROOT);
             if (name.isEmpty()) return "";
-            return sha256(type + "\u0001" + group + "\u0001" + name);
+            e.favoriteKeyCache = sha256(type + "\u0001" + group + "\u0001" + name);
+            return e.favoriteKeyCache;
         } catch (Exception ignored) {
             return "";
         }
@@ -3962,9 +4100,18 @@ public class MainActivity extends Activity {
         favoriteKeys.addAll(saved);
         String raw=getPreferences(0).getString(FAVORITES_JSON,null);
         if(raw==null||raw.isEmpty())return;
+        JSONArray list;
         try{
-            JSONArray list=new JSONArray(raw);
-            for(int i=0;i<list.length();i++){
+            list=new JSONArray(raw);
+        }catch(Exception broken){
+            // Keep the raw text: a parse failure must never be written back as an
+            // empty list, which would silently erase everything in My List.
+            reportRecoveredError("reading saved My List titles",broken);
+            return;
+        }
+        // One bad row must not drop the rest of the list.
+        for(int i=0;i<list.length();i++){
+            try{
                 JSONObject o=list.getJSONObject(i);
                 Entry e=new Entry(o.optString("name",""),o.optString("url",""),
                         o.optString("group",""),o.optString("logo",""),
@@ -3972,8 +4119,8 @@ public class MainActivity extends Activity {
                 String key=o.optString("key","");
                 if(key.isEmpty())key=favoriteKey(e);
                 if(!key.isEmpty())favoriteEntries.put(key,e);
-            }
-        }catch(Exception ignored){}
+            }catch(Exception ignored){}
+        }
     }
 
     private void saveFavorites(){
@@ -3994,14 +4141,26 @@ public class MainActivity extends Activity {
                     .putStringSet("favorites",new HashSet<>(favoriteKeys))
                     .putString(FAVORITES_JSON,list.toString())
                     .apply();
-        }catch(Exception ignored){}
+        }catch(Exception failed){
+            reportRecoveredError("writing My List to storage",failed);
+        }
     }
 
     private boolean isFavorite(Entry e){
         if(e==null)return false;
         String key=favoriteKey(e);
         if(!key.isEmpty()&&favoriteEntries.containsKey(key))return true;
-        try{return favoriteKeys.contains(sha256(e.url));}catch(Exception ignored){return false;}
+        String hash=urlHash(e);
+        return !hash.isEmpty()&&favoriteKeys.contains(hash);
+    }
+
+    /** Cached SHA-256 of the stream URL, used by the legacy favourite list. */
+    private String urlHash(Entry e){
+        if(e==null||e.url==null)return "";
+        if(e.urlHash==null){
+            try{e.urlHash=sha256(e.url);}catch(Exception ignored){e.urlHash="";}
+        }
+        return e.urlHash;
     }
 
     /** Add or remove one title from both the snapshot and the legacy key set. */
@@ -4015,10 +4174,12 @@ public class MainActivity extends Activity {
         String key=favoriteKey(e);
         if(add){
             if(!key.isEmpty()&&favoriteEntries.put(key,e)==null)changed=true;
-            try{if(favoriteKeys.add(sha256(e.url)))changed=true;}catch(Exception ignored){}
+            String hash=urlHash(e);
+            if(!hash.isEmpty()&&favoriteKeys.add(hash))changed=true;
         }else{
             if(!key.isEmpty()&&favoriteEntries.remove(key)!=null)changed=true;
-            try{if(favoriteKeys.remove(sha256(e.url)))changed=true;}catch(Exception ignored){}
+            String hash=urlHash(e);
+            if(!hash.isEmpty()&&favoriteKeys.remove(hash))changed=true;
         }
         if(changed&&persist)saveFavorites();
         return changed;
@@ -4026,20 +4187,105 @@ public class MainActivity extends Activity {
 
     private void toggleFavorite(Entry e){
         if(e==null)return;
+        boolean add;
         try{
-            boolean add=!isFavorite(e);
+            add=!isFavorite(e);
             setFavorite(e,add);
-            Toast.makeText(this,add?"Added to My List":"Removed from My List",Toast.LENGTH_SHORT).show();
-            // While a stream is playing the home screen is not attached, so the
-            // rebuild waits until playback closes. The key is already saved.
-            if(playing){favoritesChangedWhilePlaying=true;return;}
-            if(gridOverlayView!=null)refreshFocusedFavoriteBadge(e);
-            // Rebuild the visible shelf/tab in every category so the heart is
-            // correct immediately. Saving from Movies or Live TV used to leave
-            // the card unchanged, which looked like the save had failed.
+        }catch(Throwable t){
+            reportRecoveredError("saving a title to My List",t);
+            Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this,add?"Added to My List":"Removed from My List",Toast.LENGTH_SHORT).show();
+        // While a stream is playing the home screen is not attached, so the
+        // rebuild waits until playback closes. The key is already saved.
+        if(playing){favoritesChangedWhilePlaying=true;return;}
+        // The save is already persisted, so a failure while repainting the
+        // screen must never take the app down with it.
+        try{refreshAfterFavoriteChange(e,e);}catch(Throwable t){reportRecoveredError("showing the My List save",t);}
+    }
+
+    /**
+     * Bring the visible screen in line with a My List change.
+     *
+     * My List has to rebuild because a card appears or disappears, and Series
+     * groups episodes behind one card so its heart is redrawn from the show.
+     * Every other tab only needs the heart on the affected cards repainted -
+     * rebuilding the whole dashboard (and re-parsing thousands of titles) on
+     * every save made saving feel like a freeze on slower TV boxes.
+     */
+    private void refreshAfterFavoriteChange(Object rebuildTag, Entry paintedEntry){
+        if(category.equals("My List")||category.equals("Series")){
             refreshRows();
-            if(gridOverlayView==null)focusTileAfterRefresh(e);
-        }catch(Exception ignored){Toast.makeText(this,"Could not update My List",Toast.LENGTH_SHORT).show();}
+            if(gridOverlayView==null)focusTileAfterRefresh(rebuildTag);
+            return;
+        }
+        if(gridOverlayView!=null){
+            // The grid covers the dashboard; its own tiles carry the badges.
+            if(paintedEntry!=null)refreshFocusedFavoriteBadge(paintedEntry);
+            return;
+        }
+        repaintFavoriteBadges(content,paintedEntry);
+    }
+
+    /** Re-draw (or clear) the heart on every visible card for this title. */
+    private void repaintFavoriteBadges(ViewGroup parent,Entry entry){
+        if(parent==null||entry==null)return;
+        Object tag=parent.getTag();
+        if(parent instanceof LinearLayout&&parent.getChildCount()>0
+                &&parent.getChildAt(0) instanceof FrameLayout){
+            FrameLayout art=(FrameLayout)parent.getChildAt(0);
+            if(tag instanceof Entry&&sameTitle((Entry)tag,entry)){
+                addFavoriteBadge(art,(Entry)tag);
+            }else if(tag instanceof Series&&showContains((Series)tag,entry)){
+                // A show card shows the heart of the episode it would resume.
+                Series series=(Series)tag;
+                Episode resume=resumeEpisode(series);
+                Entry badgeEntry=resume!=null?resume.entry:series.episodes.get(0).entry;
+                addFavoriteBadge(art,badgeEntry);
+            }
+        }
+        for(int i=0;i<parent.getChildCount();i++){
+            View child=parent.getChildAt(i);
+            if(child instanceof ViewGroup)repaintFavoriteBadges((ViewGroup)child,entry);
+        }
+    }
+
+    private boolean showContains(Series series,Entry entry){
+        if(series==null||entry==null)return false;
+        String key=favoriteKey(entry);
+        if(key.isEmpty())return false;
+        for(Episode ep:series.episodes)if(key.equals(favoriteKey(ep.entry)))return true;
+        return false;
+    }
+
+    private boolean sameTitle(Entry a,Entry b){
+        if(a==null||b==null)return false;
+        String key=favoriteKey(a);
+        return !key.isEmpty()&&key.equals(favoriteKey(b));
+    }
+
+    /**
+     * Log (and keep) an error the app recovered from. The old code let these
+     * escape the save handler, so one bad state closed the whole app right
+     * after the user pressed MENU.
+     */
+    private void reportRecoveredError(String what,Throwable error){
+        Log.e(TAG,"Recovered while "+what,error);
+        try{
+            File dir=new File(getCacheDir(),"crash_logs");
+            if(!dir.exists())dir.mkdirs();
+            File logFile=new File(dir,"recovered_"+System.currentTimeMillis()+".txt");
+            try(FileWriter fw=new FileWriter(logFile)){
+                fw.write("StreamShelf recovered error\n");
+                fw.write("Time: "+new Date()+"\n");
+                fw.write("Version: 1.6.6\n");
+                fw.write("Android: "+Build.VERSION.RELEASE+" (SDK "+Build.VERSION.SDK_INT+")\n");
+                fw.write("Device: "+Build.MANUFACTURER+" "+Build.MODEL+"\n");
+                fw.write("What: "+what+"\n\n");
+                error.printStackTrace(new PrintWriter(fw));
+            }
+        }catch(Exception ignored){}
     }
     private void loadSources(){try{String raw=getPreferences(0).getString("sources_enc",null);if(raw==null)return;byte[] all=Base64.decode(raw,Base64.NO_WRAP);int n=((all[0]&255)<<8)|(all[1]&255);byte[] iv=Arrays.copyOfRange(all,2,2+n),cipher=Arrays.copyOfRange(all,2+n,all.length);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,secretKey(),new GCMParameterSpec(128,iv));JSONArray a=new JSONArray(new String(c.doFinal(cipher),StandardCharsets.UTF_8));for(int i=0;i<a.length();i++){JSONObject o=a.getJSONObject(i);sources.add(new Source(o.getString("name"),o.getString("url")));}activeSource=Math.min(getPreferences(0).getInt("active",0),Math.max(0,sources.size()-1));}catch(Exception ignored){sources.clear();}}
     private void saveSources(){try{JSONArray a=new JSONArray();for(Source s:sources){JSONObject o=new JSONObject();o.put("name",s.name);o.put("url",s.url);a.put(o);}Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,secretKey());byte[] iv=c.getIV(),data=c.doFinal(a.toString().getBytes(StandardCharsets.UTF_8));byte[] out=new byte[2+iv.length+data.length];out[0]=(byte)(iv.length>>8);out[1]=(byte)iv.length;System.arraycopy(iv,0,out,2,iv.length);System.arraycopy(data,0,out,2+iv.length,data.length);getPreferences(0).edit().putString("sources_enc",Base64.encodeToString(out,Base64.NO_WRAP)).putInt("active",activeSource).apply();}catch(Exception e){status.setText("Could not securely save playlist URLs.");}}
