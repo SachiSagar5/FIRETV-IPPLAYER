@@ -674,7 +674,11 @@ public class MainActivity extends Activity {
 
     /** Home shelf: one card per show instead of one per episode. */
     private void appendSeriesShelf() {
-        ArrayList<Series> shows = seriesIndex();
+        LinkedHashMap<String,ArrayList<Series>> groups=new LinkedHashMap<>();
+        for(Series s:seriesIndex())groups.computeIfAbsent(s.group==null||s.group.isEmpty()?"All Series":s.group,k->new ArrayList<>()).add(s);
+        for(String g:groups.keySet())addSeriesShelf(g,groups.get(g));
+    }
+    private void addSeriesShelf(String title, ArrayList<Series> shows) {
         if (shows.isEmpty()) return;
 
         LinearLayout heading = new LinearLayout(this);
@@ -688,7 +692,7 @@ public class MainActivity extends Activity {
         iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(24), dp(24)));
         heading.addView(iconView);
 
-        TextView name = text("Series  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView name = text(title + "  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setTypeface(null, Typeface.BOLD);
         heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
 
@@ -794,9 +798,9 @@ public class MainActivity extends Activity {
         // Add Continue Watching row if there's progress
         addContinueWatchingRow();
         
-        appendHomeShelf("Movies","Movies",false);
+        appendGroupedHomeShelves("Movies",false);
         appendSeriesShelf();
-        appendHomeShelf("Live TV","Live",true); // Live TV shares the dashboard shelf size
+        appendGroupedHomeShelves("Live",true);
         if(entries.isEmpty()){View loading=playlistError!=null?text("Could not load this playlist.\n"+playlistError,16,MUTED):loadingBlock("Loading your playlist");if(loading instanceof TextView)((TextView)loading).setPadding(dp(4),dp(12),0,dp(10));content.addView(loading);}
     }
 
@@ -1575,7 +1579,13 @@ public class MainActivity extends Activity {
         if(firstContentItem==null)firstContentItem=watch;
         return hero;
     }
-    private void appendHomeShelf(String title,String type,boolean live){ArrayList<Entry> shelf=new ArrayList<>();for(Entry e:entries)if(type.equals(e.type)&&(!type.equals("My List")||isFavorite(e)))shelf.add(e);if(shelf.isEmpty())return;
+    /** Home: one pile per playlist group instead of one flat pile per type. */
+    private void appendGroupedHomeShelves(String type,boolean live){
+        LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();
+        for(Entry e:entries)if(type.equals(e.type))groups.computeIfAbsent(e.group==null||e.group.isEmpty()?(live?"Live TV":"Movies"):e.group,k->new ArrayList<>()).add(e);
+        for(String g:groups.keySet())addHomeShelf(g,type,live,groups.get(g));
+    }
+    private void addHomeShelf(String title,String type,boolean live,ArrayList<Entry> shelf){if(shelf.isEmpty())return;
         if(type.equals("Live")){
             shelf.sort((a,b)->{boolean aK=isKannadaChannel(a),bK=isKannadaChannel(b);if(aK&&!bK)return -1;if(!aK&&bK)return 1;return 0;});
         }
