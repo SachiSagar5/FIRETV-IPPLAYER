@@ -66,7 +66,7 @@ import java.security.cert.X509Certificate;
 
 public class MainActivity extends Activity {
     private static final String TAG = "StreamShelf";
-    private static final int BG=0xff070D14, PANEL=0xff142331, RED=0xFF00CFE8, WHITE=0xFFFFFFFF, MUTED=0xFFA8B6C4;
+    private static final int BG=0xff0B1218, PANEL=0xff1A232C, EMERALD=0xFF22C55E, INACTIVE_PILL=0xFF26323D, WHITE=0xFFFFFFFF, MUTED=0xFFCBD5E2;
     private static final String DEFAULT_PLAYLIST_NAME="MyList";
     private static final String DEFAULT_PLAYLIST_URL="https://raw.githubusercontent.com/SachiSagar5/MyList-IPTV/main/MyList.m3u";
     private static final java.util.regex.Pattern GROUP_TITLE_ATTR=java.util.regex.Pattern.compile("(?:^|\\s)group-title=\"([^\"]*)\"",java.util.regex.Pattern.CASE_INSENSITIVE);
@@ -298,26 +298,48 @@ public class MainActivity extends Activity {
 
     // ... rest of the methods remain the same until play() method
     private void buildHome(){
-        // Performance optimizations
-        getWindow().setFlags(
-            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-        );
-        
-        categoryTabs.clear();
-        root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
-        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff0B1622);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
-        sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",20,RED);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",17,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",17,RED);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
-        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();if(mainScroll!=null)mainScroll.scrollTo(0,0);refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
-        sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
-        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->{setSidebarExpanded(isInsideView(newFocus,nav));scrollShelfToFocused(newFocus);scrollMainToFocused(newFocus);});
-        setSidebarExpanded(false);
-        LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);root.addView(main,new LinearLayout.LayoutParams(0,-1,1));LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);top.setPadding(dp(16),dp(3),dp(25),0);main.addView(top,new LinearLayout.LayoutParams(-1,dp(54)));searchControl=text("⌕",29,WHITE);searchControl.setGravity(Gravity.CENTER);searchControl.setFocusable(true);searchControl.setClickable(true);searchControl.setContentDescription("Search playlist");searchControl.setId(View.generateViewId());searchControl.setPadding(dp(12),0,dp(12),0);setFocusStyle(searchControl,Color.TRANSPARENT,7);searchControl.setOnClickListener(v->searchDialog());top.addView(searchControl,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView settings=text("⚙",22,WHITE);settings.setGravity(Gravity.CENTER);settings.setFocusable(true);settings.setClickable(true);settings.setContentDescription("Settings and playlist sources");settings.setPadding(dp(8),0,dp(8),0);setFocusStyle(settings,Color.TRANSPARENT,7);settings.setOnClickListener(v->sourceDialog());top.addView(settings,new LinearLayout.LayoutParams(dp(48),dp(44)));TextView clock=text(new java.text.SimpleDateFormat("hh:mm a",Locale.getDefault()).format(new Date()),14,WHITE);clock.setGravity(Gravity.CENTER);top.addView(clock,new LinearLayout.LayoutParams(dp(94),dp(44)));
-        mainScroll=new SmoothScrollView(this);mainScroll.setFillViewport(true);mainScroll.setVerticalScrollBarEnabled(false);mainScroll.setClipChildren(false);mainScroll.setClipToPadding(false);mainScroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->scheduleThumbnailScan(90));main.addView(mainScroll,new LinearLayout.LayoutParams(-1,0,1));content=new LinearLayout(this);content.setPadding(dp(14),dp(1),dp(22),dp(16));content.setOrientation(LinearLayout.VERTICAL);content.setClipChildren(false);mainScroll.addView(content);
-        status=text("",12,MUTED);status.setPadding(dp(15),0,0,0);LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL|Gravity.RIGHT);footer.setPadding(dp(12),0,dp(24),dp(7));TextView hints=text("✥  Navigate     ⓞ  Select     ↶  Back     MENU  My List",12,0xffc5c8d0);hints.setGravity(Gravity.CENTER);hints.setPadding(dp(16),dp(7),dp(16),dp(7));hints.setBackground(rounded(0xff10151d,24));footer.addView(status,new LinearLayout.LayoutParams(0,dp(32),1));footer.addView(hints);main.addView(footer,new LinearLayout.LayoutParams(-1,dp(43)));
-        requestInitialFocus();
-        showSplash();
-    }
+    // Performance optimizations
+    getWindow().setFlags(
+        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+        WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+    );
+    
+    root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
+    
+    // Slim fixed left vertical icon rail
+    sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(PANEL);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
+    sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(56)));TextView mark=text("▶",18,EMERALD);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",16,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",16,EMERALD);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
+    // Top utility cluster (search, settings, clock) in a bar after the brand
+    nav=new LinearLayout(this);nav.setOrientation(LinearLayout.HORIZONTAL);nav.setPadding(dp(8),0,0,0);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,dp(48)));
+    // Home icon
+    ImageView homeIcon=new ImageView(this);homeIcon.setImageResource(R.drawable.ic_back);homeIcon.setColorFilter(WHITE);homeIcon.setPadding(dp(8),0,dp(8),0);homeIcon.setLayoutParams(new LinearLayout.LayoutParams(dp(32),dp(32)));nav.addView(homeIcon);
+    // Search icon
+    searchControl=text("⌕",22,WHITE);searchControl.setFocusable(true);searchControl.setClickable(true);searchControl.setContentDescription("Search playlist");searchControl.setPadding(dp(8),0,dp(8),0);nav.addView(searchControl,new LinearLayout.LayoutParams(dp(44),dp(44)));setFocusStyleView(searchControl, dp(28));
+    // Settings gear
+    settingsBtn=text("⚙",20,WHITE);settingsBtn.setFocusable(true);settingsBtn.setClickable(true);settingsBtn.setContentDescription("Settings and playlist sources");settingsBtn.setPadding(dp(8),0,dp(8),0);nav.addView(settingsBtn,new LinearLayout.LayoutParams(dp(44),dp(44)));setFocusStyleView(settingsBtn, dp(28));
+    // Digital clock
+    clock=new TextView(this);clock.setText(new java.text.SimpleDateFormat("hh:mm a",Locale.getDefault()).format(new Date()));clock.setTextColor(WHITE);clock.setGravity(Gravity.CENTER);nav.addView(clock,new LinearLayout.LayoutParams(dp(80),dp(44)));
+    
+    // Top category filter pills row - directly below the header
+    LinearLayout pillRow=new LinearLayout(this);pillRow.setOrientation(LinearLayout.HORIZONTAL);pillRow.setGravity(Gravity.CENTER);pillRow.setPadding(dp(8),dp(8),dp(8),dp(4));pillRow.setBackgroundColor(0xff0f151d);pillRow.setClipChildren(false);pillRow.setClipToPadding(false);root.addView(pillRow,new LinearLayout.LayoutParams(-2,dp(44)));
+    String[] pillLabels={"[AS] KANNADA", "Live TV", "24/7 ENGLISH"};
+    for(int i=0; i<pillLabels.length; i++){final int idx=i; TextView pill=new TextView(this);pill.setText(pillLabels[i]);pill.setTextSize(14);pill.setSingleLine(true);pill.setEllipsize(android.text.TextUtils.TruncateAt.END);pill.setGravity(Gravity.CENTER);pill.setTag(pillLabels[i]);pill.setFocusable(true);pill.setClickable(true);pill.setFocusableInTouchMode(true);if(idx==0){
+        pill.setBackgroundColor(EMERALD); // active pill
+        pill.setTextColor(WHITE);pill.setTypeface(null,Typeface.BOLD);}
+    else {
+        pill.setBackgroundColor(0xAA26323D); // inactive pill translucent
+        pill.setTextColor(0xFFCBD5E2);pill.setTypeface(null,Typeface.NORMAL);}
+    pill.setPadding(dp(16),dp(8),dp(16),dp(8));pill.setTag(pillLabels[i]);pill.setOnClickListener(v->{category=pillLabels[idx];refreshRows();focusFirstContent();});}
+    // Grid header metadata: right-aligned above the card grid
+    TextView gridHeader=new TextView(this);gridHeader.setText("20 titles and See More");gridHeader.setTextSize(11);gridHeader.setTextColor(0xFF8899BB);gridHeader.setTypeface(null,Typeface.BOLD);gridHeader.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);gridHeader.setPadding(dp(8),0,dp(8),0);root.addView(gridHeader,new LinearLayout.LayoutParams(-2,dp(24)));// pill row added
+    
+    LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);root.addView(main,new LinearLayout.LayoutParams(0,-1,1));
+    content=new LinearLayout(this);content.setPadding(dp(14),dp(1),dp(22),dp(16));content.setOrientation(LinearLayout.VERTICAL);content.setClipChildren(false);content.setClipToPadding(false);main.addView(content);
+    mainScroll=new SmoothScrollView(this);mainScroll.setFillViewport(true);mainScroll.setVerticalScrollBarEnabled(false);mainScroll.setClipChildren(false);mainScroll.setClipToPadding(false);mainScroll.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->scheduleThumbnailScan(90));main.addView(mainScroll,new LinearLayout.LayoutParams(-1,0,1));
+    status=text("",12,MUTED);status.setPadding(dp(15),0,0,0);LinearLayout footer=new LinearLayout(this);footer.setGravity(Gravity.CENTER_VERTICAL|Gravity.RIGHT);footer.setPadding(dp(12),0,dp(24),dp(7));TextView hints=text("✥  Navigate     ⓞ  Select     ↶  Back     MENU  My List",12,0xffc5c8d0);hints.setGravity(Gravity.CENTER);hints.setPadding(dp(16),dp(7),dp(16),dp(7));hints.setBackground(rounded(0xff10151d,24));footer.addView(status,new LinearLayout.LayoutParams(0,dp(32),1));footer.addView(hints);main.addView(footer,new LinearLayout.LayoutParams(-1,dp(43)));
+    requestInitialFocus();
+    showSplash();
+}
     private void showWelcome(){content.removeAllViews();TextView t=text("Your screen for live TV, movies and series.",27,WHITE);t.setTypeface(null,Typeface.BOLD);t.setPadding(0,dp(30),0,dp(12));content.addView(t);TextView sub=text("Connect a playlist to start building your home screen.",16,MUTED);content.addView(sub);Button b=button("Add playlist");b.setId(View.generateViewId());b.setOnClickListener(v->sourceDialog());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(54));p.setMargins(0,dp(18),0,0);content.addView(b,p);firstContentItem=b;dismissSplash();}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextColor(WHITE);b.setBackground(rounded(RED,6));b.setFocusable(true);b.setClickable(true);b.setFocusableInTouchMode(true);setFocusStyle(b,RED,6);return b;}
     /**
@@ -579,7 +601,7 @@ public class MainActivity extends Activity {
     }
 
     private void addSeriesTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Series> shows, int start) {
-        int batchSize = 10;
+        int batchSize = 20;
         int end = Math.min(start + batchSize, shows.size());
         int width = dp(CARD_W_DP), artHeight = dp(CARD_ART_H_DP);
         for (int i = start; i < end; i++) {
@@ -903,10 +925,10 @@ public class MainActivity extends Activity {
         String label = isLive ? "LIVE TV" : isSeries ? "SERIES" : "MOVIE";
         String symbol = isLive ? "◉" : isSeries ? "▤" : "▶";
         int[][] palettes = isLive
-                ? new int[][]{{0xFF092B2A, 0xFF16735D}, {0xFF102B33, 0xFF286D80}, {0xFF172D22, 0xFF467A37}}
+                ? new int[][]{{0xFF0D141D, 0xFF1A232C}, {0xFF14223B, 0xFF22C55E}, {0xFF1E3A5B, 0xFF3A7D7E}}
                 : isSeries
-                    ? new int[][]{{0xFF12152D, 0xFF374A91}, {0xFF21152F, 0xFF70428A}, {0xFF102538, 0xFF287E9A}}
-                    : new int[][]{{0xFF200F18, 0xFF7A1F32}, {0xFF24170E, 0xFF9A5124}, {0xFF1A1428, 0xFF55418D}};
+                    ? new int[][]{{0xFF12152D, 0xFF1E2D50}, {0xFF1A2245, 0xFF2A4A8A}, {0xFF223068, 0xFF3A6A9C}}
+                    : new int[][]{{0xFF200F18, 0xFF3A1A3C}, {0xFF281E2F, 0xFF4A3A5A}, {0xFF322845, 0xFF5A4A72}};
         int paletteIndex = entry == null || entry.name == null ? 0
                 : Math.floorMod(entry.name.hashCode(), palettes.length);
         GradientDrawable backdrop = new GradientDrawable(
@@ -1656,7 +1678,7 @@ public class MainActivity extends Activity {
         hsv.setOnScrollChangeListener((View v,int x,int y,int oldX,int oldY)->scheduleThumbnailScan(60));
         return hsv;
     }
-    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=10;int end=Math.min(start+batchSize,shelf.size());int width=dp(CARD_W_DP),height=dp(CARD_ART_H_DP);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(0xff0d141d,8));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,0xff0d141d,8);tile.setOnClickListener(v->play(e));FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff131a23,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,height);artParams.setMargins(dp(2),dp(2),dp(2),dp(2));tile.addView(art,artParams);TextView placeholder=text("",25,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));placeholder.bringToFront();addFavoriteBadge(art,e);if(e.type.equals("Live")){TextView liveBadge=text("LIVE",10,WHITE);liveBadge.setTypeface(null,Typeface.BOLD);liveBadge.setPadding(dp(7),dp(3),dp(7),dp(3));liveBadge.setBackground(rounded(RED,4));FrameLayout.LayoutParams liveParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);liveParams.setMargins(dp(7),dp(7),0,0);art.addView(liveBadge,liveParams);}TextView titleText=text(e.name,13,WHITE);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(5),dp(2),dp(5),dp(3));tile.addView(titleText);LinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(CARD_H_DP));tileParams.setMargins(0,0,dp(CARD_GAP_DP),dp(4));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("LOAD MORE  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8,()->loadMoreHome(hsv,row,shelf,end,live,more));more.setOnClickListener(v->loadMoreHome(hsv,row,shelf,end,live,more));row.addView(more,new LinearLayout.LayoutParams(dp(CARD_W_DP),dp(CARD_H_DP)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
+    private void addHomeTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean live){int batchSize=20;int end=Math.min(start+batchSize,shelf.size());int cardW=dp(CARD_W_DP);int cardH=dp(CARD_H_DP);for(int i=start;i<end;i++){Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());tile.setOnClickListener(v->play(e));// Card container: rounded dark slate with shadow FrameLayout card=new FrameLayout(this);card.setBackgroundColor(PANEL);card.setClipChildren(false);card.setRadius(dp(12));// 12px radius// Title text at bottom TextView titleText=new TextView(this);titleText.setText(e.name.toUpperCase());titleText.setTextColor(WHITE);titleText.setTextSize(11);titleText.setTypeface(null,Typeface.BOLD);titleText.setMaxLines(1);titleText.setEllipsize(android.text.TextUtils.TruncateAt.END);titleText.setPadding(dp(6),dp(3),dp(6),dp(2));// Thumbnail area with gradient backdrop FrameLayout art=new FrameLayout(this);art.setBackgroundColor(0xFF0D141D);art.setClipChildren(false);// Gradient placeholder backdrop GradientDrawable backdrop = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF092B2A, 0xFF174269});backdrop.setCornerRadius(dp(7));art.setBackground(backdrop);// LIVE badge for live channels if(e.type!=null&&e.type.equals("Live")){TextView liveBadge=new TextView(this);liveBadge.setText("LIVE");liveBadge.setTextSize(8);liveBadge.setTextColor(Color.WHITE);liveBadge.setTypeface(null,Typeface.BOLD);liveBadge.setBackgroundColor(EMERALD);liveBadge.setPadding(dp(5),dp(2),dp(5),dp(2));liveBadge.setGravity(Gravity.TOP|Gravity.LEFT);liveBadge.setPadding(dp(3),dp(1),dp(3),dp(1));FrameLayout.LayoutParams liveParams=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);liveParams.setMargins(dp(6),dp(6),0,0);art.addView(liveBadge,liveParams);// Default channel logo placeholder FrameLayout iconContainer=new FrameLayout(this);iconContainer.setBackgroundColor(EMERALD);iconContainer.setPadding(dp(3),dp(3),dp(3),dp(3));iconContainer.setClipChildren(false);art.addView(iconContainer,new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT));liveBadge.setVisibility(View.VISIBLE);}// Add title to art area art.addView(titleText,new FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM|Gravity.LEFT));// Card wraptile.addView(card,new LinearLayout.LayoutParams(cardW,cardH));// Tile gapLinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(cardW,cardH);tileParams.setMargins(0,0,dp(CARD_GAP_DP),dp(4));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}}}// end addHomeTilesLinearLayout.LayoutParams tileParams=new LinearLayout.LayoutParams(width,dp(CARD_H_DP));tileParams.setMargins(0,0,dp(CARD_GAP_DP),dp(4));row.addView(tile,tileParams);if(firstContentItem==null)firstContentItem=tile;}if(end<shelf.size()){TextView more=text("LOAD MORE  ›",15,WHITE);more.setGravity(Gravity.CENTER);more.setFocusable(true);more.setClickable(true);setFocusStyle(more,0xff131a23,8,()->loadMoreHome(hsv,row,shelf,end,live,more));more.setOnClickListener(v->loadMoreHome(hsv,row,shelf,end,live,more));row.addView(more,new LinearLayout.LayoutParams(dp(CARD_W_DP),dp(CARD_H_DP)));}hsv.postDelayed(()->loadVisibleThumbnails(hsv),100);}
     private void loadMoreHome(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int next,boolean live,View more){
         row.removeView(more);int firstAdded=row.getChildCount();addHomeTiles(hsv,row,shelf,next,live);
         if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();
@@ -1772,7 +1794,7 @@ public class MainActivity extends Activity {
 
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
-        int batchSize=10;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
+        int batchSize=20;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
         for(int i=start;i<end;i++){
             Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
             if(firstContentItem==null)firstContentItem=tile;
@@ -1886,7 +1908,7 @@ public class MainActivity extends Activity {
     }
     private Bitmap decodeThumbnail(File file,int width,int height){BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeFile(file.getAbsolutePath(),bounds);if(bounds.outWidth<=0||bounds.outHeight<=0)return null;BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;while(bounds.outWidth/(options.inSampleSize*2)>=width&&bounds.outHeight/(options.inSampleSize*2)>=height)options.inSampleSize*=2;options.inPreferredConfig=Bitmap.Config.RGB_565;return BitmapFactory.decodeFile(file.getAbsolutePath(),options);}
     private String sha256(String value)throws Exception{byte[] bytes=MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));StringBuilder out=new StringBuilder();for(byte b:bytes)out.append(String.format(Locale.ROOT,"%02x",b&255));return out.toString();}
-    private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;for(File f:files)size+=f.length();int count=files.length;for(File f:files){if(count<=140&&size<=36L*1024*1024)break;long bytes=f.length();if(f.delete()){size-=bytes;count--;}}}
+    private void trimThumbnailDiskCache(File dir){File[] files=dir.listFiles((d,name)->name.endsWith(".img"));if(files==null)return;Arrays.sort(files,Comparator.comparingLong(File::lastModified));long size=0;int count=files.length;for(File f:files){size+=f.length();if(count<=80&&size<=16L*1024*1024)break;if(f.delete()){size-=f.length();count--;}}}
     private void animateContentIn(){
         if(content==null)return;
         content.animate().cancel();
@@ -2201,7 +2223,7 @@ public class MainActivity extends Activity {
         view.setOnFocusChangeListener((v,focused)->{
             GradientDrawable bg=rounded(focused?0xff292f38:normalColor,radius);
             if(focused){
-                bg.setStroke(dp(3), RED);
+                bg.setStroke(dp(2), EMERALD);
                 // Use View elevation + outline for glow effect instead of GradientDrawable shadow
                 v.setOutlineProvider(new ViewOutlineProvider() {
                     @Override
@@ -2210,7 +2232,7 @@ public class MainActivity extends Activity {
                     }
                 });
                 v.setClipToOutline(true);
-                v.setElevation(dp(12));
+                v.setElevation(dp(8));
             } else {
                 // Don't show white border for menu items or content cards - use transparent stroke
                 if (!isMenuItem) {
