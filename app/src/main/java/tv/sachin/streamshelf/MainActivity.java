@@ -66,7 +66,7 @@ import java.security.cert.X509Certificate;
 
 public class MainActivity extends Activity {
     private static final String TAG = "StreamShelf";
-    private static final int BG=0xff101114, PANEL=0xff202126, RED=0xffe50914, WHITE=0xfff5f5f5, MUTED=0xffa7a7ad;
+    private static final int BG=0xff070D14, PANEL=0xff142331, RED=0xFF00CFE8, WHITE=0xFFFFFFFF, MUTED=0xFFA8B6C4;
     private static final String DEFAULT_PLAYLIST_NAME="MyList";
     private static final String DEFAULT_PLAYLIST_URL="https://raw.githubusercontent.com/SachiSagar5/MyList-IPTV/main/MyList.m3u";
     private static final java.util.regex.Pattern GROUP_TITLE_ATTR=java.util.regex.Pattern.compile("(?:^|\\s)group-title=\"([^\"]*)\"",java.util.regex.Pattern.CASE_INSENSITIVE);
@@ -305,8 +305,8 @@ public class MainActivity extends Activity {
         );
         
         categoryTabs.clear();
-        root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(0xff05090f);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
-        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff080c12);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
+        root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
+        sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff0B1622);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
         sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",20,RED);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",17,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",17,RED);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
         nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();if(mainScroll!=null)mainScroll.scrollTo(0,0);refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
@@ -2021,12 +2021,14 @@ public class MainActivity extends Activity {
         if (splashView == null || splashDismissPending) return;
         long elapsed = SystemClock.uptimeMillis() - splashShownAt;
         if (elapsed < SPLASH_MIN_MS) {
-            splashDismissPending = true;
-            if (handler != null) {
-                handler.postDelayed(() -> {
-                    splashDismissPending = false;
-                    dismissSplash();
-                }, SPLASH_MIN_MS - elapsed);
+            long delay = SPLASH_MIN_MS - elapsed;
+            if (handler != null && handler.postDelayed(() -> {
+                splashDismissPending = false;
+                dismissSplash();
+            }, delay)) {
+                splashDismissPending = true;
+            } else {
+                dismissSplashNow();
             }
             return;
         }
@@ -2337,6 +2339,10 @@ public class MainActivity extends Activity {
                 }
                 if (key == android.view.KeyEvent.KEYCODE_MEDIA_AUDIO_TRACK) {
                     showAudioDialog();
+                    return true;
+                }
+                if (key == android.view.KeyEvent.KEYCODE_GUIDE) {
+                    cyclePlaybackSpeed();
                     return true;
                 }
                 if (key == android.view.KeyEvent.KEYCODE_SETTINGS) {
@@ -2674,7 +2680,67 @@ public class MainActivity extends Activity {
             else if (controlOrder.length > 0) controlOrder[0].requestFocus();
         }
     }
-    private void loadPlaylist(){if(sources.isEmpty())return;final Source s=sources.get(activeSource);final int request=playlistRequestId.incrementAndGet();playlistError=null;status.setText("Loading "+s.name+"…");entries.clear();refreshRows();playlistWorkers.execute(()->{ArrayList<Entry> parsed=new ArrayList<>();String error=null;HttpURLConnection c=null;try{URL u=new URL(s.url);c=(HttpURLConnection)u.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(18000);c.setRequestProperty("User-Agent","StreamShelf/1.2");c.connect();if(c.getResponseCode()<200||c.getResponseCode()>=300)throw new IOException("HTTP "+c.getResponseCode());try(BufferedReader r=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8),32768)){String line,info=null;while((line=r.readLine())!=null){line=line.trim();if(line.startsWith("#EXTINF")){info=line;}else if(!line.isEmpty()&&!line.startsWith("#")&&info!=null){String name=afterComma(info);String group=attr(info,GROUP_TITLE_ATTR);String logo=attr(info,TVG_LOGO_ATTR);String type=classify(group,name);parsed.add(new Entry(name,line,group,logo,type));info=null;}}}}catch(Exception e){error=e.getMessage()==null?"Could not load playlist":e.getMessage();}finally{if(c!=null)c.disconnect();}final String err=error;runOnUiThread(()->{if(request!=playlistRequestId.get()||isFinishing()||isDestroyed())return;entries.clear();entries.addAll(parsed);seriesIndexCache=null;seriesIndexCacheSize=-1;playlistError=err;status.setText(err==null?parsed.size()+" items loaded":"Playlist error: "+err);if(parsed.isEmpty()&&err==null)playlistError="No playable entries found. Check the M3U format and URLs.";dismissSplash();refreshRows();});});}
+    private void loadPlaylist(){
+        if (sources.isEmpty()) { dismissSplash(); return; }
+        final Source s = sources.get(activeSource);
+        final int request = playlistRequestId.incrementAndGet();
+        status.setText("Loading " + s.name + "…");
+        playlistError = null;
+        entries.clear();
+        refreshRows();
+        playlistWorkers.execute(() -> {
+            ArrayList<Entry> parsed = new ArrayList<>();
+            String error = null;
+            HttpURLConnection c = null;
+            try {
+                URL u = new URL(s.url);
+                c = (HttpURLConnection) u.openConnection();
+                c.setConnectTimeout(12000);
+                c.setReadTimeout(18000);
+                c.setRequestProperty("User-Agent", "StreamShelf/1.2");
+                c.connect();
+                if (c.getResponseCode() < 200 || c.getResponseCode() >= 300) {
+                    throw new IOException("HTTP " + c.getResponseCode());
+                }
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8), 32768)) {
+                    String line, info = null;
+                    while ((line = r.readLine()) != null) {
+                        line = line.trim();
+                        if (line.startsWith("#EXTINF")) {
+                            info = line;
+                        } else if (!line.isEmpty() && !line.startsWith("#") && info != null) {
+                            String name = afterComma(info);
+                            String group = attr(info, GROUP_TITLE_ATTR);
+                            String logo = attr(info, TVG_LOGO_ATTR);
+                            String type = classify(group, name);
+                            parsed.add(new Entry(name, line, group, logo, type));
+                            info = null;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                error = e.getMessage() == null ? "Could not load playlist" : e.getMessage();
+            } finally {
+                if (c != null) c.disconnect();
+            }
+            final String err = error;
+            runOnUiThread(() -> {
+                if (request != playlistRequestId.get() || isFinishing() || isDestroyed()) return;
+                entries.clear();
+                entries.addAll(parsed);
+                seriesIndexCache = null;
+                seriesIndexCacheSize = -1;
+                playlistError = err;
+                status.setText(err == null ? parsed.size() + " items loaded" : "Playlist error: " + err);
+                if (parsed.isEmpty() && err == null) {
+                    playlistError = "No playable entries found. Check the M3U format and URLs.";
+                }
+                dismissSplash();
+                refreshRows();
+            });
+        });
+    }
     private String afterComma(String s){int i=s.indexOf(',');String v=i>=0?s.substring(i+1).trim():"Untitled";return v.isEmpty()?"Untitled":v;}
     private String attr(String s,java.util.regex.Pattern pattern){java.util.regex.Matcher m=pattern.matcher(s);return m.find()?m.group(1):"";}
     private String classify(String g,String n){String s=(g+" "+n).toLowerCase(Locale.ROOT);if(SERIES_HINT.matcher(s).find())return "Series";if(MOVIE_HINT.matcher(s).find())return "Movies";return "Live";}
@@ -2786,7 +2852,9 @@ public class MainActivity extends Activity {
 
     // Bottom controls
     private LinearLayout bottomControls;
-    private TextView rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn;
+    private static final float[] PLAYBACK_SPEEDS = {1.0f, 1.25f, 1.5f, 2.0f};
+    private int playbackSpeedIndex = 0;
+    private TextView rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, speedBtn, fullscreenBtn;
     private TextView rewindLabel, playPauseLabel, forwardLabel, subtitlesLabel, audioLabel, fullscreenLabel;
     private View focusedControl = null;
     private int focusedControlIndex = 0;
@@ -2981,7 +3049,7 @@ public class MainActivity extends Activity {
         bottomControls.setBackground(bottomGradient);
 
         // Create control buttons with labels. Every cell keeps the same
-        // structure (icon above a single-line label) so the six controls sit on
+        // structure (icon above a single-line label) so the seven controls sit on
         // one horizontal line; mixing one- and two-line labels pushed "Pause"
         // and "Fullscreen" down relative to the others.
         rewindBtn = createControlButton(R.drawable.ic_rewind, "Rewind 10s", "Rewind 10 seconds");
@@ -2992,9 +3060,10 @@ public class MainActivity extends Activity {
         // control: streams usually expose several audio renditions (languages,
         // 5.1 vs stereo) and those are actually switchable through ExoPlayer.
         audioBtn = createControlButton(R.drawable.ic_audio, "Audio Auto", "Audio: Auto");
+        speedBtn = createControlButton(R.drawable.ic_speed, currentPlaybackSpeedText(), currentPlaybackSpeedDescription());
         fullscreenBtn = createControlButton(R.drawable.ic_fullscreen, "Fullscreen", "Fullscreen");
 
-        TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn};
+        TextView[] controls = {rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, speedBtn, fullscreenBtn};
         for (TextView control : controls) {
             LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(64), 1);
             bottomControls.addView(control, controlParams);
@@ -3006,10 +3075,11 @@ public class MainActivity extends Activity {
         forwardBtn.setOnClickListener(v -> seekRelative(10000));
         subtitlesBtn.setOnClickListener(v -> showSubtitleDialog());
         audioBtn.setOnClickListener(v -> showAudioDialog());
+        speedBtn.setOnClickListener(v -> cyclePlaybackSpeed());
         fullscreenBtn.setOnClickListener(v -> toggleFullscreen());
 
         // Control order for D-pad navigation (Left/Right)
-        controlOrder = new View[]{rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, fullscreenBtn};
+        controlOrder = new View[]{rewindBtn, playPauseBtn, forwardBtn, subtitlesBtn, audioBtn, speedBtn, fullscreenBtn};
 
         // Initially hide bottom controls (only timeline + center visible)
         bottomControls.setVisibility(View.GONE);
@@ -3430,6 +3500,28 @@ public class MainActivity extends Activity {
         scheduleHideControls();
     }
 
+    private String currentPlaybackSpeedText() {
+        return PLAYBACK_SPEEDS[playbackSpeedIndex] + "×";
+    }
+
+    private String currentPlaybackSpeedDescription() {
+        return "Playback speed: " + currentPlaybackSpeedText();
+    }
+
+    private void cyclePlaybackSpeed() {
+        playbackSpeedIndex = (playbackSpeedIndex + 1) % PLAYBACK_SPEEDS.length;
+        float speed = PLAYBACK_SPEEDS[playbackSpeedIndex];
+        if (player != null) player.setPlaybackSpeed(speed);
+        if (speedBtn != null) {
+            String label = currentPlaybackSpeedText();
+            speedBtn.setText(label);
+            speedBtn.setTag(label);
+            speedBtn.setContentDescription(currentPlaybackSpeedDescription());
+        }
+        Toast.makeText(this, "Speed: " + currentPlaybackSpeedText(), Toast.LENGTH_SHORT).show();
+        showControls(true);
+    }
+
     private void seekRelative(long ms) {
         if (player == null) return;
         if (!player.isCurrentMediaItemSeekable()) {
@@ -3770,6 +3862,7 @@ public class MainActivity extends Activity {
                 .build();
 
             player.setHandleAudioBecomingNoisy(true);
+            player.setPlaybackSpeed(PLAYBACK_SPEEDS[playbackSpeedIndex]);
 
             final ExoPlayer boundPlayer = player;
             player.addListener(new Player.Listener() {
@@ -4024,7 +4117,7 @@ public class MainActivity extends Activity {
                     reportRecoveredError("rebuilding the home screen after playback", t);
                 }
             }
-            root.setAlpha(0f);
+            root.setAlpha(1f);
             root.animate().alpha(1f).setDuration(140).withEndAction(() -> {
                 if (previousHomeFocus != null && previousHomeFocus.isShown() && previousHomeFocus.isFocusable()) {
                     previousHomeFocus.requestFocus();
@@ -4038,12 +4131,11 @@ public class MainActivity extends Activity {
             playerErrorPanel = null;
             // Clear custom UI refs
             topBar = null;
-            centerControls = null;
             timelineContainer = null;
-            bottomControls = null;
             progressBar = null;
             controlOrder = null;
             audioBtn = null;
+            speedBtn = null;
             return;
         }
         if (gridOverlayView != null) {

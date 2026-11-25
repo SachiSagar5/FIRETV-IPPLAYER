@@ -67,6 +67,12 @@ android {
             signingConfig signingConfigs.shared
         }
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "StreamShelf-v${variant.versionName}-${variant.buildType.name}.apk"
+        }
+    }
 }
 
 dependencies {
