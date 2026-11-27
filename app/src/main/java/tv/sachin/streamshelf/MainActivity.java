@@ -87,6 +87,11 @@ public class MainActivity extends Activity {
     private static final String FAVORITES_JSON="favorites_json";
     private LinearLayout root, content, nav, sidebar, sidebarBrand; private ScrollView mainScroll; private TextView status, sourceLabel, brandWordmark, brandProduct; private TextView searchControl; private String category="Home"; private int activeSource=0; private boolean sidebarExpanded;
     private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
+    // Group piles: each section keeps its own selected group-title. The sentinel
+    // keeps "All" distinct from a playlist that literally has a group named All.
+    private static final String ALL_GROUPS="\u0000all";
+    private final LinkedHashMap<String,String> selectedGroups=new LinkedHashMap<>();
+    private LinearLayout groupPileRow;
     private final LruCache<String,Bitmap> thumbnailMemory=new LruCache<String,Bitmap>((int)(Runtime.getRuntime().maxMemory()/1024/8)){@Override protected int sizeOf(String key,Bitmap bitmap){return Math.max(1,bitmap.getByteCount()/1024);}};
     private final ThreadPoolExecutor thumbnailWorkers = new ThreadPoolExecutor(
         4, 8, 30, TimeUnit.SECONDS,
@@ -334,6 +339,7 @@ public class MainActivity extends Activity {
                 content.animate().cancel();
                 content.removeAllViews();
                 shelfRows.clear();
+                groupPileRow=null;
                 TextView problem=text("Could not show this section. Press Back and open it again.",18,MUTED);
                 problem.setPadding(0,dp(22),0,0);
                 problem.setFocusable(true);
@@ -346,7 +352,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void buildRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
+    private void buildRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();groupPileRow=null;firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
         // Series are grouped by show, not listed episode by episode.
         if(category.equals("Series")){renderSeriesCategory();wireMainFocus();animateContentIn();return;}
@@ -372,9 +378,24 @@ public class MainActivity extends Activity {
             String emptyMessage=entries.isEmpty()?(playlistError!=null?"Could not load this playlist.\n"+playlistError:"Loading your playlist…"):category.equals("My List")?"Your list is empty. Focus a title and press MENU to save it.":"No "+category.toLowerCase(Locale.ROOT)+" found in this playlist.";
             TextView empty=text(emptyMessage,20,MUTED);empty.setPadding(0,dp(22),0,0);empty.setFocusable(true);empty.setId(View.generateViewId());content.addView(empty);firstContentItem=empty;wireMainFocus();animateContentIn();return;
         }
-        LinkedHashMap<String,ArrayList<Entry>> groups=new LinkedHashMap<>();for(Entry e:shown){String g=e.group==null||e.group.isEmpty()?category:e.group;groups.computeIfAbsent(g,k->new ArrayList<>()).add(e);}
+        // Group piles: the section's own group-title values, in playlist order.
+        // Picking one narrows the shelves below; "All" restores every group.
+        ArrayList<String> titles=groupTitles(shown,category);
+        String selected=resolveSelectedGroup(category,titles);
+        if(titles.size()>1){
+            groupPileRow=addGroupPiles(category,titles,selected);
+            if(!ALL_GROUPS.equals(selected)){
+                ArrayList<Entry> narrowed=new ArrayList<>();
+                for(Entry e:shown)if(selected.equals(groupOf(e,category)))narrowed.add(e);
+                if(!narrowed.isEmpty())shown=narrowed;
+            }
+        }
+        // One shelf only: the pile above decides what it holds, so groups no
+        // longer stack as separate rows down the page.
+        ArrayList<Entry> shelfItems=shown;
+        String shelfTitle=ALL_GROUPS.equals(selected)?category:selected;
 
-        // Category icons for group headers - use vector drawables
+        // Category icons for the shelf header - use vector drawables
         int catIconRes = 0;
         int catIconColor = WHITE;
         String firstType=shown.get(0).type==null?"":shown.get(0).type;
@@ -384,56 +405,121 @@ public class MainActivity extends Activity {
         else if (category.equals("My List")) { catIconRes = R.drawable.ic_my_list; catIconColor = 0xFFE91E63; }
 
         boolean portrait=category.equals("Movies")||category.equals("Series");
-        for(String group:groups.keySet()){
-            LinearLayout heading = new LinearLayout(this);
-            heading.setGravity(Gravity.CENTER_VERTICAL);
-            heading.setPadding(0, dp(8), 0, dp(4));
 
-            ImageView iconView = new ImageView(this);
-            if (catIconRes != 0) {
-                iconView.setImageResource(catIconRes);
-                iconView.setColorFilter(catIconColor);
-            }
-            iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
-            heading.addView(iconView);
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(0, dp(8), 0, dp(4));
 
-            TextView name = text(group + "  ›", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            name.setTypeface(null, Typeface.BOLD);
-            heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
-
-            TextView count = text(groups.get(group).size() + " titles", 13, 0xFF888888);
-            count.setPadding(0, 0, dp(12), 0);
-            heading.addView(count);
-
-            TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
-            seeAll.setFocusable(true);
-            seeAll.setClickable(true);
-            seeAll.setGravity(Gravity.CENTER);
-            seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
-            setFocusStyle(seeAll, Color.TRANSPARENT, 6);
-            seeAll.setTag(groups.get(group));
-            seeAll.setOnClickListener(v -> {
-                ArrayList<Entry> allItems = (ArrayList<Entry>) v.getTag();
-                showAllGrid(group, allItems);
-            });
-            heading.addView(seeAll);
-
-            content.addView(heading);
-
-            // Subtle divider
-            View divider = new View(this);
-            divider.setBackgroundColor(0xFF1A1A2E);
-            LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
-            divParams.setMargins(0, dp(4), 0, dp(8));
-            content.addView(divider,divParams);
-
-            HorizontalScrollView hsv = createShelfScroll();
-            LinearLayout row = (LinearLayout) hsv.getChildAt(0);
-            content.addView(hsv);
-            shelfRows.add(hsv);
-            addShelfTiles(hsv, row, groups.get(group), 0, portrait);
+        ImageView iconView = new ImageView(this);
+        if (catIconRes != 0) {
+            iconView.setImageResource(catIconRes);
+            iconView.setColorFilter(catIconColor);
         }
+        iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
+        heading.addView(iconView);
+
+        TextView name = text(shelfTitle + "  ›", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
+
+        TextView count = text(shelfItems.size() + " titles", 13, 0xFF888888);
+        count.setPadding(0, 0, dp(12), 0);
+        heading.addView(count);
+
+        TextView seeAll = text("See All  ›", 13, 0xffc7cad1);
+        seeAll.setFocusable(true);
+        seeAll.setClickable(true);
+        seeAll.setGravity(Gravity.CENTER);
+        seeAll.setPadding(dp(10), dp(5), dp(10), dp(5));
+        setFocusStyle(seeAll, Color.TRANSPARENT, 6);
+        seeAll.setOnClickListener(v -> showAllGrid(shelfTitle, shelfItems));
+        heading.addView(seeAll);
+
+        content.addView(heading);
+
+        // Subtle divider
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1A1A2E);
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(4), 0, dp(8));
+        content.addView(divider,divParams);
+
+        HorizontalScrollView hsv = createShelfScroll();
+        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+        content.addView(hsv);
+        shelfRows.add(hsv);
+        addShelfTiles(hsv, row, shelfItems, 0, portrait);
         wireMainFocus();animateContentIn();}
+
+    // ==================== GROUP PILES ====================
+    // Sections offer the group-title values their playlist actually publishes.
+    // Nothing is predefined: a group exists because an entry carried it.
+
+    private static String groupOf(Entry e,String section){return e.group==null||e.group.isEmpty()?section:e.group;}
+
+    /** Distinct group-title values in playlist order, missing ones under the section name. */
+    private ArrayList<String> groupTitles(ArrayList<Entry> shown,String section){
+        ArrayList<String> out=new ArrayList<>();
+        for(Entry e:shown){String g=groupOf(e,section);if(!out.contains(g))out.add(g);}
+        return out;
+    }
+
+    /** Stored selection, dropped back to All when the playlist no longer has that group. */
+    private String resolveSelectedGroup(String section,ArrayList<String> titles){
+        String selected=selectedGroups.get(section);
+        if(selected==null||(!ALL_GROUPS.equals(selected)&&!titles.contains(selected)))selected=ALL_GROUPS;
+        selectedGroups.put(section,selected);
+        return selected;
+    }
+
+    /** Horizontal pile of group buttons; returns the row so focus wiring can reach it. */
+    private LinearLayout addGroupPiles(String section,ArrayList<String> titles,String selected){
+        HorizontalScrollView hsv=createShelfScroll();
+        hsv.setPadding(0,dp(2),0,dp(6));
+        LinearLayout row=(LinearLayout)hsv.getChildAt(0);
+        ArrayList<String> pills=new ArrayList<>();
+        pills.add(ALL_GROUPS);pills.addAll(titles);
+        for(String g:pills){
+            boolean active=g.equals(selected);
+            int normal=active?RED:0xff20232a;
+            TextView pill=text(ALL_GROUPS.equals(g)?"All":g,14,WHITE);
+            pill.setTypeface(null,Typeface.BOLD);
+            pill.setSingleLine(true);
+            pill.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            pill.setGravity(Gravity.CENTER);
+            pill.setPadding(dp(16),dp(8),dp(16),dp(8));
+            pill.setFocusable(true);
+            pill.setClickable(true);
+            pill.setTag(g);
+            pill.setId(View.generateViewId());
+            pill.setBackground(rounded(normal,20));
+            setFocusStyle(pill,normal,20);
+            pill.setOnClickListener(v->selectGroup(section,g));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(40));
+            p.setMargins(0,0,dp(10),0);
+            row.addView(pill,p);
+        }
+        content.addView(hsv);
+        // Register the pile row as a shelf so scrollShelfToFocused keeps the
+        // focused pill visible when the row is wider than the screen.
+        shelfRows.add(hsv);
+        return row;
+    }
+
+    /** Rebuild the section under the new group, then put focus back on that pill. */
+    private void selectGroup(String section,String group){
+        selectedGroups.put(section,group);
+        refreshRows();
+        if(mainScroll!=null)mainScroll.scrollTo(0,0);
+        final LinearLayout row=groupPileRow;
+        if(row==null)return;
+        row.post(()->{
+            for(int i=0;i<row.getChildCount();i++){
+                View pill=row.getChildAt(i);
+                if(group.equals(pill.getTag())){pill.requestFocus();return;}
+            }
+        });
+    }
     // ==================== SERIES GROUPING ====================
     // Providers publish one M3U entry per episode. Listing them individually
     // turns a 10-show playlist into hundreds of near-identical "Show S01E07"
@@ -579,7 +665,7 @@ public class MainActivity extends Activity {
     }
 
     private void addSeriesTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Series> shows, int start) {
-        int batchSize = 10;
+        int batchSize = 20;
         int end = Math.min(start + batchSize, shows.size());
         int width = dp(CARD_W_DP), artHeight = dp(CARD_ART_H_DP);
         for (int i = start; i < end; i++) {
@@ -746,45 +832,53 @@ public class MainActivity extends Activity {
             return;
         }
 
-        LinkedHashMap<String, ArrayList<Series>> groups = new LinkedHashMap<>();
+        ArrayList<String> titles = new ArrayList<>();
         for (Series series : shows) {
             String group = series.group == null || series.group.isEmpty() ? "All Series" : series.group;
-            groups.computeIfAbsent(group, k -> new ArrayList<>()).add(series);
+            if (!titles.contains(group)) titles.add(group);
         }
+        String selected = resolveSelectedGroup("Series", titles);
+        if (titles.size() > 1) groupPileRow = addGroupPiles("Series", titles, selected);
 
-        for (String group : groups.keySet()) {
-            LinearLayout heading = new LinearLayout(this);
-            heading.setGravity(Gravity.CENTER_VERTICAL);
-            heading.setPadding(0, dp(8), 0, dp(4));
-
-            ImageView iconView = new ImageView(this);
-            iconView.setImageResource(R.drawable.ic_series);
-            iconView.setColorFilter(0xFF9C27B0);
-            iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
-            heading.addView(iconView);
-
-            TextView name = text(group + "  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            name.setTypeface(null, Typeface.BOLD);
-            heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
-
-            TextView count = text(groups.get(group).size() == 1 ? "1 show" : groups.get(group).size() + " shows", 13, 0xFF888888);
-            count.setPadding(0, 0, dp(12), 0);
-            heading.addView(count);
-
-            content.addView(heading);
-
-            View divider = new View(this);
-            divider.setBackgroundColor(0xFF1A1A2E);
-            LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
-            divParams.setMargins(0, dp(4), 0, dp(8));
-            content.addView(divider,divParams);
-
-            HorizontalScrollView hsv = createShelfScroll();
-            LinearLayout row = (LinearLayout) hsv.getChildAt(0);
-            content.addView(hsv);
-            shelfRows.add(hsv);
-            addSeriesTiles(hsv, row, groups.get(group), 0);
+        // One shelf only, same as the other sections: the pile decides the content.
+        ArrayList<Series> shelfShows = new ArrayList<>();
+        for (Series series : shows) {
+            String group = series.group == null || series.group.isEmpty() ? "All Series" : series.group;
+            if (ALL_GROUPS.equals(selected) || group.equals(selected)) shelfShows.add(series);
         }
+        String shelfTitle = ALL_GROUPS.equals(selected) ? "Series" : selected;
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.setPadding(0, dp(8), 0, dp(4));
+
+        ImageView iconView = new ImageView(this);
+        iconView.setImageResource(R.drawable.ic_series);
+        iconView.setColorFilter(0xFF9C27B0);
+        iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(20), dp(20)));
+        heading.addView(iconView);
+
+        TextView name = text(shelfTitle + "  \u203a", 17, WHITE);name.setSingleLine(true);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        name.setTypeface(null, Typeface.BOLD);
+        heading.addView(name, new LinearLayout.LayoutParams(0, dp(30), 1));
+
+        TextView count = text(shelfShows.size() == 1 ? "1 show" : shelfShows.size() + " shows", 13, 0xFF888888);
+        count.setPadding(0, 0, dp(12), 0);
+        heading.addView(count);
+
+        content.addView(heading);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(0xFF1A1A2E);
+        LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(-1, dp(1));
+        divParams.setMargins(0, dp(4), 0, dp(8));
+        content.addView(divider,divParams);
+
+        HorizontalScrollView hsv = createShelfScroll();
+        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+        content.addView(hsv);
+        shelfRows.add(hsv);
+        addSeriesTiles(hsv, row, shelfShows, 0);
     }
 
     private void renderHome(){
@@ -1030,7 +1124,7 @@ public class MainActivity extends Activity {
 
     // ==================== SHOW ALL GRID VIEW (WITH PAGINATION) ====================
     // Pagination constants
-    private static final int ITEMS_PER_PAGE = 24; // 4 rows x 6 columns
+    private static final int ITEMS_PER_PAGE = 20; // first page matches the 20-card shelf batch
     private static final int LOAD_THRESHOLD_DP = 300; // Load more when 300dp from bottom
     
     // Pagination state
@@ -1651,7 +1745,22 @@ public class MainActivity extends Activity {
         row.removeView(more);int firstAdded=row.getChildCount();addHomeTiles(hsv,row,shelf,next,live);
         if(firstAdded<row.getChildCount())row.getChildAt(firstAdded).requestFocus();
     }
-    private void wireMainFocus(){if(firstContentItem==null)return;TextView selected=currentCategoryTab();if(selected!=null){selected.setNextFocusRightId(firstContentItem.getId());firstContentItem.setNextFocusLeftId(selected.getId());}if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());}
+    private void wireMainFocus(){
+        if(firstContentItem==null)return;
+        TextView selected=currentCategoryTab();
+        // With group piles present the rail steps onto the pile row first, then
+        // down into the shelves, instead of skipping the groups entirely.
+        View railTarget=groupPileRow!=null&&groupPileRow.getChildCount()>0?groupPileRow.getChildAt(0):firstContentItem;
+        if(selected!=null){selected.setNextFocusRightId(railTarget.getId());railTarget.setNextFocusLeftId(selected.getId());}
+        if(groupPileRow!=null){
+            for(int i=0;i<groupPileRow.getChildCount();i++){
+                View pill=groupPileRow.getChildAt(i);
+                pill.setNextFocusDownId(firstContentItem.getId());
+            }
+            firstContentItem.setNextFocusUpId(railTarget.getId());
+        }
+        if(searchControl!=null)searchControl.setNextFocusDownId(firstContentItem.getId());
+    }
     private static final String FAVORITE_BADGE = "favorite-badge";
     // One shared landscape card size for every Home shelf (Movies, Series,
     // Continue Watching and Live TV) so the dashboard stays on a single grid.
@@ -1762,7 +1871,7 @@ public class MainActivity extends Activity {
 
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
-        int batchSize=10;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
+        int batchSize=20;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
         for(int i=start;i<end;i++){
             Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
             if(firstContentItem==null)firstContentItem=tile;
