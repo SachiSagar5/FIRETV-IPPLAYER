@@ -86,7 +86,7 @@ public class MainActivity extends Activity {
     private final LinkedHashMap<String,Entry> favoriteEntries=new LinkedHashMap<>();
     private static final String FAVORITES_JSON="favorites_json";
     private LinearLayout root, content, nav, sidebar, sidebarBrand; private ScrollView mainScroll; private TextView status, sourceLabel, brandWordmark, brandProduct; private TextView searchControl; private String category="Home"; private int activeSource=0; private boolean sidebarExpanded;
-    private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private View firstContentItem;
+    private final ArrayList<TextView> categoryTabs=new ArrayList<>(); private final ArrayList<HorizontalScrollView> shelfRows=new ArrayList<>(); private final ArrayList<LinearLayout> shelfGrids=new ArrayList<>(); private View firstContentItem;
     // Group piles: each section keeps its own selected group-title. The sentinel
     // keeps "All" distinct from a playlist that literally has a group named All.
     private static final String ALL_GROUPS="\u0000all";
@@ -313,7 +313,7 @@ public class MainActivity extends Activity {
         root=new LinearLayout(this);root.setOrientation(LinearLayout.HORIZONTAL);root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);root.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);setContentView(root);
         sidebar=new LinearLayout(this);sidebar.setOrientation(LinearLayout.VERTICAL);sidebar.setPadding(dp(8),dp(8),dp(8),dp(8));sidebar.setBackgroundColor(0xff0B1622);sidebar.setClipChildren(false);sidebar.setClipToPadding(false);root.addView(sidebar,new LinearLayout.LayoutParams(dp(64),-1));
         sidebarBrand=new LinearLayout(this);sidebarBrand.setGravity(Gravity.CENTER_VERTICAL);sidebarBrand.setPadding(dp(4),0,0,0);sidebar.addView(sidebarBrand,new LinearLayout.LayoutParams(-1,dp(68)));TextView mark=text("▶",20,RED);sidebarBrand.addView(mark);brandWordmark=text(" IPTV ",17,WHITE);brandWordmark.setTypeface(null,Typeface.BOLD);brandWordmark.setSingleLine(true);sidebarBrand.addView(brandWordmark);brandProduct=text("Player",17,RED);brandProduct.setTypeface(null,Typeface.BOLD);brandProduct.setSingleLine(true);sidebarBrand.addView(brandProduct);
-        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[][] tabs={{"Home","⌂"},{"Movies","▣"},{"Series","▤"},{"Live TV","▣"},{"My List","♡"},{"Settings","⚙"}};for(String[] item:tabs){String tab=item[0];String icon=item[1];TextView v=text(icon,21,WHITE);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();if(mainScroll!=null)mainScroll.scrollTo(0,0);refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
+        nav=new LinearLayout(this);nav.setOrientation(LinearLayout.VERTICAL);nav.setClipChildren(false);sidebar.addView(nav,new LinearLayout.LayoutParams(-1,0,1));String[] tabs={"Home","Movies","Series","Live TV","My List","Settings"};int[] tabIcons={R.drawable.ic_home,R.drawable.ic_movies,R.drawable.ic_series,R.drawable.ic_live_tv,R.drawable.ic_my_list,R.drawable.ic_settings};for(int t=0;t<tabs.length;t++){String tab=tabs[t];TextView v=text("",21,WHITE);v.setTag(TAG_NAV_ICON,tabIcons[t]);v.setTag(tab);v.setContentDescription(tab);v.setSingleLine(true);v.setEllipsize(android.text.TextUtils.TruncateAt.END);v.setFocusable(true);v.setClickable(true);v.setGravity(Gravity.CENTER);v.setId(View.generateViewId());v.setPadding(dp(5),0,dp(5),0);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(47));p.setMargins(0,0,0,dp(5));nav.addView(v,p);setFocusStyle(v,Color.TRANSPARENT,7);v.setOnClickListener(w->{if(tab.equals("Settings")){sourceDialog();return;}category=tab;updateCategoryTabs();if(mainScroll!=null)mainScroll.scrollTo(0,0);refreshRows();focusFirstContent();});categoryTabs.add(v);}updateCategoryTabs();
         sourceLabel=text("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name),12,MUTED);sourceLabel.setSingleLine(true);sourceLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sourceLabel.setFocusable(true);sourceLabel.setClickable(true);sourceLabel.setId(View.generateViewId());sourceLabel.setPadding(dp(9),dp(12),dp(6),dp(7));setFocusStyle(sourceLabel,Color.TRANSPARENT,6);sourceLabel.setOnClickListener(v->{if(sources.isEmpty())sourceDialog();else manageSources();});sidebar.addView(sourceLabel,new LinearLayout.LayoutParams(-1,dp(46)));
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus,newFocus)->{setSidebarExpanded(isInsideView(newFocus,nav));scrollShelfToFocused(newFocus);scrollMainToFocused(newFocus);});
         setSidebarExpanded(false);
@@ -339,6 +339,7 @@ public class MainActivity extends Activity {
                 content.animate().cancel();
                 content.removeAllViews();
                 shelfRows.clear();
+                shelfGrids.clear();
                 groupPileRow=null;
                 TextView problem=text("Could not show this section. Press Back and open it again.",18,MUTED);
                 problem.setPadding(0,dp(22),0,0);
@@ -352,7 +353,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void buildRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();groupPileRow=null;firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
+    private void buildRows(){content.animate().cancel();content.setAlpha(0f);content.removeAllViews();shelfRows.clear();shelfGrids.clear();groupPileRow=null;firstContentItem=null;sourceLabel.setText("SOURCE  ·  "+(sources.isEmpty()?"Add playlist":sources.get(Math.min(activeSource,sources.size()-1)).name));
         if(sources.isEmpty()){showWelcome();wireMainFocus();animateContentIn();return;}if(category.equals("Home")){renderHome();wireMainFocus();animateContentIn();return;}
         // Series are grouped by show, not listed episode by episode.
         if(category.equals("Series")){renderSeriesCategory();wireMainFocus();animateContentIn();return;}
@@ -444,11 +445,15 @@ public class MainActivity extends Activity {
         divParams.setMargins(0, dp(4), 0, dp(8));
         content.addView(divider,divParams);
 
-        HorizontalScrollView hsv = createShelfScroll();
-        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
-        content.addView(hsv);
-        shelfRows.add(hsv);
-        addShelfTiles(hsv, row, shelfItems, 0, portrait);
+        if(category.equals("Movies")||category.equals("Live TV")){
+            addShelfGrid(shelfItems,portrait,0);
+        }else{
+            HorizontalScrollView hsv = createShelfScroll();
+            LinearLayout row = (LinearLayout) hsv.getChildAt(0);
+            content.addView(hsv);
+            shelfRows.add(hsv);
+            addShelfTiles(hsv, row, shelfItems, 0, portrait);
+        }
         wireMainFocus();animateContentIn();}
 
     // ==================== GROUP PILES ====================
@@ -664,67 +669,71 @@ public class MainActivity extends Activity {
         showAllGrid(series.name, episodes, focusIndex);
     }
 
+    /** One show card, shared by the home shelf and the Series grid. */
+    private LinearLayout buildSeriesTile(Series series) {
+        Episode resume = resumeEpisode(series);
+
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setBackground(rounded(PANEL, 9));
+        tile.setClipChildren(false);
+        tile.setFocusable(true);
+        tile.setClickable(true);
+        tile.setTag(series);
+        tile.setId(View.generateViewId());
+        setFocusStyle(tile, PANEL, 9);
+        tile.setOnClickListener(v -> openSeries(series));
+        if (firstContentItem == null) firstContentItem = tile;
+
+        FrameLayout art = new FrameLayout(this);
+        art.setBackground(rounded(0xff17191e, 8));
+        art.setClipToOutline(true);
+        LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(-1, dp(CARD_ART_H_DP));
+        artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
+        tile.addView(art, artParams);
+
+        TextView placeholder = text("", 32, WHITE);
+        styleArtworkPlaceholder(placeholder, series.episodes.get(0).entry);
+        art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
+
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setAdjustViewBounds(false);
+        image.setContentDescription(series.name + " artwork");
+        image.setTag(resume != null ? resume.entry : series.episodes.get(0).entry);
+        art.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        placeholder.bringToFront();
+
+        // Episode count, or the episode a remote should resume from.
+        String badgeText = resume != null && getPlaybackProgress(resume.entry) != null
+                ? "RESUME " + episodeLabel(resume)
+                : series.episodes.size() + (series.episodes.size() == 1 ? " EPISODE" : " EPISODES");
+        TextView badge = text(badgeText, 10, WHITE);
+        badge.setTypeface(null, Typeface.BOLD);
+        badge.setPadding(dp(7), dp(3), dp(7), dp(3));
+        badge.setBackground(rounded(0xE0000000, 4));
+        FrameLayout.LayoutParams badgeParams =
+                new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
+        badgeParams.setMargins(dp(7), dp(7), 0, 0);
+        art.addView(badge, badgeParams);
+
+        addFavoriteBadge(art, resume != null ? resume.entry : series.episodes.get(0).entry);
+
+        TextView title = text(series.name, 13, WHITE);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setMaxLines(1);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setPadding(dp(5), dp(2), dp(5), dp(3));
+        tile.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        return tile;
+    }
+
     private void addSeriesTiles(HorizontalScrollView hsv, LinearLayout row, ArrayList<Series> shows, int start) {
         int batchSize = 20;
         int end = Math.min(start + batchSize, shows.size());
-        int width = dp(CARD_W_DP), artHeight = dp(CARD_ART_H_DP);
+        int width = dp(CARD_W_DP);
         for (int i = start; i < end; i++) {
-            Series series = shows.get(i);
-            Episode resume = resumeEpisode(series);
-
-            LinearLayout tile = new LinearLayout(this);
-            tile.setOrientation(LinearLayout.VERTICAL);
-            tile.setBackground(rounded(PANEL, 9));
-            tile.setClipChildren(false);
-            tile.setFocusable(true);
-            tile.setClickable(true);
-            tile.setTag(series);
-            tile.setId(View.generateViewId());
-            setFocusStyle(tile, PANEL, 9);
-            tile.setOnClickListener(v -> openSeries(series));
-            if (firstContentItem == null) firstContentItem = tile;
-
-            FrameLayout art = new FrameLayout(this);
-            art.setBackground(rounded(0xff17191e, 8));
-            art.setClipToOutline(true);
-            LinearLayout.LayoutParams artParams = new LinearLayout.LayoutParams(-1, artHeight);
-            artParams.setMargins(dp(2), dp(2), dp(2), dp(2));
-            tile.addView(art, artParams);
-
-            TextView placeholder = text("", 32, WHITE);
-            styleArtworkPlaceholder(placeholder, series.episodes.get(0).entry);
-            art.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
-
-            ImageView image = new ImageView(this);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            image.setAdjustViewBounds(false);
-            image.setContentDescription(series.name + " artwork");
-            image.setTag(resume != null ? resume.entry : series.episodes.get(0).entry);
-            art.addView(image, new FrameLayout.LayoutParams(-1, -1));
-            placeholder.bringToFront();
-
-            // Episode count, or the episode a remote should resume from.
-            String badgeText = resume != null && getPlaybackProgress(resume.entry) != null
-                    ? "RESUME " + episodeLabel(resume)
-                    : series.episodes.size() + (series.episodes.size() == 1 ? " EPISODE" : " EPISODES");
-            TextView badge = text(badgeText, 10, WHITE);
-            badge.setTypeface(null, Typeface.BOLD);
-            badge.setPadding(dp(7), dp(3), dp(7), dp(3));
-            badge.setBackground(rounded(0xE0000000, 4));
-            FrameLayout.LayoutParams badgeParams =
-                    new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
-            badgeParams.setMargins(dp(7), dp(7), 0, 0);
-            art.addView(badge, badgeParams);
-
-            addFavoriteBadge(art, resume != null ? resume.entry : series.episodes.get(0).entry);
-
-            TextView title = text(series.name, 13, WHITE);
-            title.setTypeface(null, Typeface.BOLD);
-            title.setMaxLines(1);
-            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            title.setPadding(dp(5), dp(2), dp(5), dp(3));
-            tile.addView(title, new LinearLayout.LayoutParams(-1, -2));
-
+            LinearLayout tile = buildSeriesTile(shows.get(i));
             LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(width, dp(CARD_H_DP));
             tileParams.setMargins(0, 0, dp(CARD_GAP_DP), dp(4));
             row.addView(tile, tileParams);
@@ -756,6 +765,141 @@ public class MainActivity extends Activity {
         int firstAdded = row.getChildCount();
         addSeriesTiles(hsv, row, shows, next);
         if (firstAdded < row.getChildCount()) row.getChildAt(firstAdded).requestFocus();
+    }
+
+    // ==================== SECTION GRIDS ====================
+    // Movies, Live TV and Series are grids, not shelves: cards wrap into rows
+    // that fill the width the sidebar leaves. Card size stays fixed so artwork
+    // keeps its aspect; the column count is what adapts to the screen.
+
+    /** How many cards of this width fit beside the sidebar. */
+    private int gridColumns(int cellWidth) {
+        int avail = getResources().getDisplayMetrics().widthPixels
+                - dp(14) - dp(22) - dp(sidebarExpanded ? 186 : 64);
+        return Math.max(2, (avail + dp(CARD_GAP_DP)) / (cellWidth + dp(CARD_GAP_DP)));
+    }
+
+    private LinearLayout gridRow(LinearLayout grid) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setClipChildren(false);
+        row.setClipToPadding(false);
+        grid.addView(row);
+        return row;
+    }
+
+    /** Last row if it still has space, otherwise a fresh one. */
+    private LinearLayout lastGridRow(LinearLayout grid, int columns) {
+        if (grid.getChildCount() > 0) {
+            View last = grid.getChildAt(grid.getChildCount() - 1);
+            if (last instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) last;
+                if (row.getOrientation() == LinearLayout.HORIZONTAL && row.getChildCount() < columns) return row;
+            }
+        }
+        return gridRow(grid);
+    }
+
+    private LinearLayout loadMoreTile(int arrowSize) {
+        LinearLayout more = new LinearLayout(this);
+        more.setGravity(Gravity.CENTER);
+        more.setOrientation(LinearLayout.VERTICAL);
+        more.setBackground(rounded(0xff292b31, 9));
+        more.setFocusable(true);
+        more.setClickable(true);
+        TextView arrow = text("\u203a", arrowSize, RED);
+        arrow.setGravity(Gravity.CENTER);
+        more.addView(arrow);
+        TextView label = text("LOAD MORE", 12, WHITE);
+        label.setTypeface(null, Typeface.BOLD);
+        label.setGravity(Gravity.CENTER);
+        more.addView(label);
+        return more;
+    }
+
+    private void addShelfGrid(ArrayList<Entry> shelf, boolean portrait, int start) {
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        content.addView(grid);
+        shelfGrids.add(grid);
+        appendShelfGrid(grid, shelf, start, portrait);
+        grid.postDelayed(() -> loadThumbnailsIn(grid), 100);
+    }
+
+    /** Fill the next 20 cards into the grid; returns the first one added. */
+    private View appendShelfGrid(LinearLayout grid, ArrayList<Entry> shelf, int start, boolean portrait) {
+        int width = dp(132);
+        int height = portrait ? dp(222) : dp(152);
+        int columns = gridColumns(width);
+        int end = Math.min(start + 20, shelf.size());
+        LinearLayout row = lastGridRow(grid, columns);
+        View firstAdded = null;
+        for (int i = start; i < end; i++) {
+            if (row.getChildCount() == columns) row = gridRow(grid);
+            LinearLayout tile = buildShelfTile(shelf.get(i), portrait);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(width, height);
+            p.setMargins(0, 0, dp(10), dp(8));
+            row.addView(tile, p);
+            if (firstAdded == null) firstAdded = tile;
+        }
+        if (end < shelf.size()) {
+            if (row.getChildCount() == columns) row = gridRow(grid);
+            LinearLayout more = loadMoreTile(42);
+            Runnable action = () -> loadMoreShelfGrid(grid, shelf, end, portrait, more);
+            more.setOnClickListener(v -> action.run());
+            setFocusStyle(more, 0xff292b31, 9, action);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(width, height);
+            p.setMargins(0, 0, dp(10), dp(8));
+            row.addView(more, p);
+        }
+        return firstAdded;
+    }
+
+    private void loadMoreShelfGrid(LinearLayout grid, ArrayList<Entry> shelf, int next, boolean portrait, View more) {
+        if (more.getParent() instanceof ViewGroup) ((ViewGroup) more.getParent()).removeView(more);
+        View first = appendShelfGrid(grid, shelf, next, portrait);
+        if (first != null) first.requestFocus();
+    }
+
+    private void addSeriesGrid(ArrayList<Series> shows, int start) {
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        content.addView(grid);
+        shelfGrids.add(grid);
+        appendSeriesGrid(grid, shows, start);
+        grid.postDelayed(() -> loadThumbnailsIn(grid), 100);
+    }
+
+    private View appendSeriesGrid(LinearLayout grid, ArrayList<Series> shows, int start) {
+        int width = dp(132), height = dp(CARD_H_DP), columns = gridColumns(width);
+        int end = Math.min(start + 20, shows.size());
+        LinearLayout row = lastGridRow(grid, columns);
+        View firstAdded = null;
+        for (int i = start; i < end; i++) {
+            if (row.getChildCount() == columns) row = gridRow(grid);
+            LinearLayout tile = buildSeriesTile(shows.get(i));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(width, height);
+            p.setMargins(0, 0, dp(CARD_GAP_DP), dp(4));
+            row.addView(tile, p);
+            if (firstAdded == null) firstAdded = tile;
+        }
+        if (end < shows.size()) {
+            if (row.getChildCount() == columns) row = gridRow(grid);
+            LinearLayout more = loadMoreTile(34);
+            Runnable action = () -> loadMoreSeriesGrid(grid, shows, end, more);
+            more.setOnClickListener(v -> action.run());
+            setFocusStyle(more, 0xff292b31, 9, action);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(width, height);
+            p.setMargins(0, 0, dp(CARD_GAP_DP), dp(4));
+            row.addView(more, p);
+        }
+        return firstAdded;
+    }
+
+    private void loadMoreSeriesGrid(LinearLayout grid, ArrayList<Series> shows, int next, View more) {
+        if (more.getParent() instanceof ViewGroup) ((ViewGroup) more.getParent()).removeView(more);
+        View first = appendSeriesGrid(grid, shows, next);
+        if (first != null) first.requestFocus();
     }
 
     /** Home shelf: one card per show instead of one per episode. */
@@ -874,11 +1018,7 @@ public class MainActivity extends Activity {
         divParams.setMargins(0, dp(4), 0, dp(8));
         content.addView(divider,divParams);
 
-        HorizontalScrollView hsv = createShelfScroll();
-        LinearLayout row = (LinearLayout) hsv.getChildAt(0);
-        content.addView(hsv);
-        shelfRows.add(hsv);
-        addSeriesTiles(hsv, row, shelfShows, 0);
+        addSeriesGrid(shelfShows, 0);
     }
 
     private void renderHome(){
@@ -1870,18 +2010,24 @@ public class MainActivity extends Activity {
     }
 
     private void showEntryInfo(Entry e){new AlertDialog.Builder(this).setTitle(e.name).setMessage(e.type+(e.group.isEmpty()?"":"\n"+e.group)).setPositiveButton("Watch Now",(d,w)->play(e)).setNegativeButton("Close",null).setNeutralButton(isFavorite(e)?"Remove from My List":"Add to My List",(d,w)->{toggleFavorite(e);}).show();}
+    /** One movie/channel card, shared by the shelves and the section grids. */
+    private LinearLayout buildShelfTile(Entry e,boolean portrait){
+        int artHeight=portrait?dp(164):dp(92);
+        LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
+        if(firstContentItem==null)firstContentItem=tile;
+        FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
+        TextView placeholder=text("",32,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
+        ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
+        placeholder.bringToFront();
+        if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
+        addFavoriteBadge(art,e);
+        TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
+        return tile;
+    }
     private void addShelfTiles(HorizontalScrollView hsv,LinearLayout row,ArrayList<Entry> shelf,int start,boolean portrait){
-        int batchSize=20;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188),artHeight=portrait?dp(164):dp(92);
+        int batchSize=20;int end=Math.min(start+batchSize,shelf.size());int width=portrait?dp(132):dp(188);
         for(int i=start;i<end;i++){
-            Entry e=shelf.get(i);LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);tile.setBackground(rounded(PANEL,9));tile.setClipChildren(false);tile.setFocusable(true);tile.setClickable(true);tile.setTag(e);tile.setId(View.generateViewId());setFocusStyle(tile,PANEL,9);tile.setOnClickListener(v->play(e));
-            if(firstContentItem==null)firstContentItem=tile;
-            FrameLayout art=new FrameLayout(this);art.setBackground(rounded(0xff17191e,8));art.setClipToOutline(true);LinearLayout.LayoutParams artParams=new LinearLayout.LayoutParams(-1,artHeight);artParams.setMargins(dp(5),dp(5),dp(5),dp(4));tile.addView(art,artParams);
-            TextView placeholder=text("",32,WHITE);styleArtworkPlaceholder(placeholder,e);art.addView(placeholder,new FrameLayout.LayoutParams(-1,-1));
-            ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setAdjustViewBounds(false);image.setContentDescription(e.name+" artwork");image.setTag(e);art.addView(image,new FrameLayout.LayoutParams(-1,-1));
-            placeholder.bringToFront();
-            if(e.type.equals("Live")){TextView badge=text("LIVE",10,WHITE);badge.setTypeface(null,Typeface.BOLD);badge.setPadding(dp(7),dp(3),dp(7),dp(3));badge.setBackground(rounded(RED,4));FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,-2,Gravity.TOP|Gravity.LEFT);bp.setMargins(dp(7),dp(7),0,0);art.addView(badge,bp);}
-            addFavoriteBadge(art,e);
-            TextView title=text(e.name,14,WHITE);title.setTypeface(null,Typeface.BOLD);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);title.setPadding(dp(10),dp(4),dp(10),dp(8));tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
+            LinearLayout tile=buildShelfTile(shelf.get(i),portrait);
             LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(width,portrait?dp(222):dp(152));p.setMargins(0,0,dp(10),dp(8));row.addView(tile,p);
         }
         if(end<shelf.size()){
@@ -1900,30 +2046,38 @@ public class MainActivity extends Activity {
                 || !(shelf.getChildAt(0) instanceof ViewGroup)) return;
         // Skip shelves that are entirely off-screen instead of walking them.
         if (!shelf.getGlobalVisibleRect(reusableRect)) return;
-        ViewGroup row = (ViewGroup) shelf.getChildAt(0);
-        for (int i = 0; i < row.getChildCount(); i++) {
-            View child = row.getChildAt(i);
-            if (!(child instanceof LinearLayout)) continue;
-            LinearLayout tile = (LinearLayout) child;
-            if (tile.getChildCount() == 0 || !(tile.getChildAt(0) instanceof FrameLayout)) continue;
-            FrameLayout art = (FrameLayout) tile.getChildAt(0);
-            if (!art.getGlobalVisibleRect(reusableRect)) continue;
-            TextView fallback = null;
-            ImageView image = null;
-            for (int j = 0; j < art.getChildCount(); j++) {
-                View item = art.getChildAt(j);
-                if (item instanceof TextView && fallback == null) fallback = (TextView) item;
-                if (item instanceof ImageView) {
-                    image = (ImageView) item;
-                    break;
-                }
+        loadThumbnailsIn((ViewGroup) shelf.getChildAt(0));
+    }
+
+    /** Walks a row or a whole grid, loading only the artwork that is on screen. */
+    private void loadThumbnailsIn(ViewGroup group) {
+        if (group.getVisibility() != View.VISIBLE) return;
+        if (!group.getGlobalVisibleRect(reusableRect)) return;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (!(child instanceof ViewGroup)) continue;
+            if (child instanceof FrameLayout) loadArtThumbnail((FrameLayout) child);
+            else loadThumbnailsIn((ViewGroup) child);
+        }
+    }
+
+    private void loadArtThumbnail(FrameLayout art) {
+        if (!art.getGlobalVisibleRect(reusableRect)) return;
+        TextView fallback = null;
+        ImageView image = null;
+        for (int j = 0; j < art.getChildCount(); j++) {
+            View item = art.getChildAt(j);
+            if (item instanceof TextView && fallback == null) fallback = (TextView) item;
+            if (item instanceof ImageView) {
+                image = (ImageView) item;
+                break;
             }
-            if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) continue;
-            Object tag = image.getTag();
-            if (tag instanceof Entry) {
-                Entry entry = (Entry) tag;
-                loadThumbnail(image, entry.logo, image.getWidth(), image.getHeight(), fallback);
-            }
+        }
+        if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) return;
+        Object tag = image.getTag();
+        if (tag instanceof Entry) {
+            Entry entry = (Entry) tag;
+            loadThumbnail(image, entry.logo, image.getWidth(), image.getHeight(), fallback);
         }
     }
     private void loadThumbnail(ImageView target,String url,int width,int height){
@@ -2228,6 +2382,17 @@ public class MainActivity extends Activity {
     }
 
     /** Keep the focused shelf comfortably inside the vertical viewport. */
+    /** A row of cards inside a section grid (not a horizontal shelf). */
+    private boolean isGridRow(View view) {
+        if (!(view instanceof LinearLayout) || ((LinearLayout) view).getOrientation() != LinearLayout.HORIZONTAL) return false;
+        ViewParent gp = view.getParent();
+        if (!(gp instanceof View)) return false;
+        View parent = (View) gp;
+        return parent instanceof LinearLayout
+                && ((LinearLayout) parent).getOrientation() == LinearLayout.VERTICAL
+                && parent.getParent() == content;
+    }
+
     private void scrollMainToFocused(View focused) {
         if (focused == null || content == null || mainScroll == null) return;
         if (!isInsideView(focused, content)) return;
@@ -2235,7 +2400,11 @@ public class MainActivity extends Activity {
         while (block != null && block.getParent() != content) {
             ViewParent parent = block.getParent();
             if (!(parent instanceof View)) return;
-            block = (View) parent;
+            View parentView = (View) parent;
+            // Scroll by the grid row, not the whole grid, or one D-pad step
+            // down would jump to the end of every row below.
+            if (isGridRow(parentView)) { block = parentView; break; }
+            block = parentView;
         }
         if (block == null) return;
         final View target = block;
@@ -2263,10 +2432,11 @@ public class MainActivity extends Activity {
         thumbnailScanRunnable = () -> {
             thumbnailScanRunnable = null;
             for (HorizontalScrollView shelf : shelfRows) loadVisibleThumbnails(shelf);
+            for (LinearLayout grid : shelfGrids) loadThumbnailsIn(grid);
         };
         handler.postDelayed(thumbnailScanRunnable, Math.max(16, delayMs));
     }
-    private void updateCategoryTabs(){for(TextView tab:categoryTabs){boolean selected=category.equals(String.valueOf(tab.getTag()));tab.setTextColor(selected?WHITE:0xffd0d2d7);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(rounded(selected?0xffa90d19:Color.TRANSPARENT,7));}}
+    private void updateCategoryTabs(){for(TextView tab:categoryTabs){boolean selected=category.equals(String.valueOf(tab.getTag()));tab.setTextColor(selected?WHITE:0xffd0d2d7);tab.setTypeface(null,selected?Typeface.BOLD:Typeface.NORMAL);tab.setBackground(rounded(selected?0xffa90d19:Color.TRANSPARENT,7));applyNavIcon(tab,sidebarExpanded);}}
     private boolean isInsideView(View child, ViewGroup parent){for(View view=child;view!=null;){if(view==parent)return true;android.view.ViewParent next=view.getParent();view=next instanceof View?(View)next:null;}return false;}
     private void setSidebarExpanded(boolean expanded){
         if(sidebar==null)return;
@@ -2281,14 +2451,29 @@ public class MainActivity extends Activity {
         sourceLabel.setVisibility(expanded?View.VISIBLE:View.GONE);
         for(TextView tab:categoryTabs){
             String name=String.valueOf(tab.getTag());
-            String icon="Home".equals(name)?"⌂":"Movies".equals(name)||"Live TV".equals(name)?"▣":"Series".equals(name)?"▤":"My List".equals(name)?"♡":"⚙";
-            tab.setText(expanded?icon+"   "+name:icon);
-            tab.setTextSize(expanded?18:21);
+            tab.setText(expanded?name:"");
+            tab.setTextSize(expanded?16:21);
             tab.setSingleLine(true);
             tab.setEllipsize(android.text.TextUtils.TruncateAt.END);
             tab.setGravity(expanded?Gravity.CENTER_VERTICAL:Gravity.CENTER);
-            tab.setPadding(dp(expanded?14:5),0,dp(expanded?7:5),0);
+            tab.setPadding(dp(expanded?12:5),0,dp(expanded?7:5),0);
+            applyNavIcon(tab,expanded);
         }
+    }
+
+    // setTag(int,Object) rejects framework ids, so the icon key must be app-specific (key>>>24 >= 2)
+    private static final int TAG_NAV_ICON=0x0A000001;
+    private void applyNavIcon(TextView tab,boolean expanded){
+        Object res=tab.getTag(TAG_NAV_ICON);
+        if(!(res instanceof Integer))return;
+        Drawable icon=ContextCompat.getDrawable(this,(Integer)res);
+        if(icon==null)return;
+        icon=icon.mutate();
+        icon.setTint(category.equals(String.valueOf(tab.getTag()))?WHITE:0xffd0d2d7);
+        int size=dp(expanded?22:24);
+        icon.setBounds(0,0,size,size);
+        tab.setCompoundDrawablePadding(dp(expanded?10:0));
+        tab.setCompoundDrawables(icon,null,null,null);
     }
     private void setFocusStyle(View view,int normalColor,int radius){
         setFocusStyle(view,normalColor,radius,null);
