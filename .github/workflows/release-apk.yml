@@ -43,10 +43,8 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: 34
-          ndk-version: r26c
           cmdline-tools-version: latest
-          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+          packages: 'platforms;android-35 build-tools;35.0.0 platform-tools'
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -59,10 +57,9 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Build Release APK with Gradle
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: 8.9
-          arguments: assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: Verify Release APK
         run: |

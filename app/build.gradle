@@ -33,8 +33,11 @@ android {
         // already installed 1.6.6 would keep showing the old, stretched banner
         // icon after updating. A new versionCode forces the icon cache to be
         // rebuilt, and the app now ships a real square launcher icon.
-        versionCode 23
-        versionName '1.6.6'
+        // 24 / 1.6.7: CI-only release. Tagged builds publish the renamed APK
+        // instead of failing to find app-debug.apk, so release assets now match
+        // the pushed source.
+        versionCode 24
+        versionName '1.6.7'
     }
 
     /**
